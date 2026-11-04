@@ -12,7 +12,7 @@ and time series from a Microsoft SQL Server database.
    install.packages(c(
      "targets", "odbc", "pool", "duckdb", "DBI", "dplyr", "tibble", "tidyr", "keyring",
      "sf", "ggplot2", "ggridges", "patchwork", "marquee", "scales", "ragg",
-     "systemfonts", "rnaturalearth"
+     "systemfonts", "rnaturalearthdata"
    ))
    ```
 
@@ -114,12 +114,12 @@ delay. Each filters by four properties, in m below ground surface:
 2. maximum depth to groundwater (deepest monthly mean in the window) less
    than `dtw_max`
 3. screen position (`screen_rule`):
-   - `below`: the screen top lies below the water table, at most
-     `top_below_max` m below the mean water table and not above the typical
-     annual low (`dtw_annual_low`, deepest month of each year averaged), so
-     the screen does not fall dry in the annual cycle
+   - `below`: the screen top lies below the mean water table, at most
+     `top_below_max` m deeper, and the screen bottom is deeper than the
+     typical annual low (`dtw_annual_low`, deepest month of each year
+     averaged), so the well does not fall dry in the annual cycle
    - `spans`: the screen reaches across the mean water table, its bottom
-     below the annual low
+     deeper than the annual low
 4. screen length up to `screen_length_max`
 
 | Scenario | Mean depth | Max depth | Screen | Length |
@@ -129,6 +129,8 @@ delay. Each filters by four properties, in m below ground surface:
 | Very shallow | 0.5-3 m | < 5 m | top 0-1 m below the water table | <= 2 m |
 | Screen at the water table | 1-5 m | < 10 m | across the water table | <= 3 m |
 | Extended depth | 1-8 m | < 12 m | top 0-3 m below the water table | <= 4 m |
+
+In all scenarios the screen bottom must be deeper than the annual low.
 
 Each scenario figure shows the selected wells on a map of Germany, their
 number with the wells left after each criterion, and the distribution of
@@ -143,6 +145,11 @@ their coordinate system is guessed from the value ranges per well (WGS84,
 UTM 32/33 with zone prefix, Gauss-Krüger, plain UTM taken as zone 32). Set
 `x`, `y` and `crs` in `well_config` if this goes wrong; the guess is
 reported when the pipeline runs.
+
+Borders: the Natural Earth state borders are downloaded once into
+`cache/naturalearth/`. Where the download is blocked (proxy), put
+`ne_10m_admin_1_states_provinces.zip` from naturalearthdata.com there by
+hand; until then the maps show the country outline from rnaturalearthdata.
 
 ## How it works
 

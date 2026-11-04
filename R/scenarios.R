@@ -7,13 +7,14 @@
 #   2. maximum depth to groundwater (dtw_deepest, deepest monthly mean in the
 #      window) below dtw_max
 #   3. position of the screen relative to the water table, by screen_rule:
-#      - "below": the screen top lies below the water table, at most
-#        top_below_max m below the mean water table, and not above the
-#        typical annual low (dtw_annual_low), so the screen does not fall dry
-#        in the annual cycle
+#      - "below": the screen top lies below the mean water table, at most
+#        top_below_max m deeper (dtw_mean <= screen_top <= dtw_mean +
+#        top_below_max), and the screen bottom is deeper than the typical
+#        annual low (screen_bot >= dtw_annual_low), so the well does not fall
+#        dry in the annual cycle
 #      - "spans": the screen reaches across the mean water table (top above,
-#        bottom below it), and its bottom lies below the annual low, so the
-#        well does not fall dry
+#        bottom below it), and its bottom is deeper than the annual low, so
+#        the well does not fall dry
 #   4. screen length (screen_bot - screen_top) above 0 and up to
 #      screen_length_max
 
@@ -34,8 +35,9 @@ evaluate_scenarios <- function(wells, scenarios) {
     s <- scenarios[i, ]
     screen_position <- switch(
       s$screen_rule,
-      below = base$screen_top >= base$dtw_annual_low &
-        base$screen_top <= base$dtw_mean + s$top_below_max,
+      below = base$screen_top >= base$dtw_mean &
+        base$screen_top <= base$dtw_mean + s$top_below_max &
+        base$screen_bot >= base$dtw_annual_low,
       spans = base$screen_top <= base$dtw_mean &
         base$screen_bot >= base$dtw_annual_low,
       stop("Unknown screen_rule: ", s$screen_rule, call. = FALSE)
@@ -85,10 +87,10 @@ describe_scenario <- function(s) {
   screen <- switch(
     s$screen_rule,
     below = paste0(
-      "Screen top below the water table: at most ", m(s$top_below_max),
-      " m below the mean, not above the annual low"
+      "Screen top 0\u2013", m(s$top_below_max),
+      " m below the mean water table, bottom deeper than the annual low"
     ),
-    spans = "Screen across the mean water table, bottom below the annual low"
+    spans = "Screen across the mean water table, bottom deeper than the annual low"
   )
   c(
     dtw_mean = paste0("Mean depth to groundwater ", m(s$dtw_mean_min), "–", m(s$dtw_mean_max), " m"),

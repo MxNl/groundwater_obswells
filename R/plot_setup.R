@@ -110,28 +110,66 @@ save_figure <- function(plot, path, width, height) {
   path
 }
 
-# State borders of Germany (Natural Earth 1:10 m, downloaded into
-# cache/naturalearth once), in `crs`. Without rnaturalearth: the country
-# outline from rnaturalearthdata (1:50 m).
+# State borders of Germany (Natural Earth 1:10 m), in `crs`. The zip is
+# downloaded once into cache/naturalearth/ with R's own download (proxy and
+# certificate settings of R; on Windows also the system's Internet settings)
+# and read locally: rnaturalearth reads it through GDAL directly from the
+# web, which fails behind many company proxies. If the download fails, the
+# country outline of the rnaturalearthdata package (1:50 m, no state
+# borders, no download) is used. To provide the file by hand, put
+# ne_10m_admin_1_states_provinces.zip into cache/naturalearth/.
 read_germany <- function(crs = 25832) {
-  if (requireNamespace("rnaturalearth", quietly = TRUE)) {
-    destdir <- "cache/naturalearth"
+  destdir <- "cache/naturalearth"
+  layer <- "ne_10m_admin_1_states_provinces"
+  zip <- file.path(destdir, paste0(layer, ".zip"))
+  url <- paste0("https://naciscdn.org/naturalearth/10m/cultural/", layer, ".zip")
+
+  if (!file.exists(zip)) {
     dir.create(destdir, showWarnings = FALSE, recursive = TRUE)
-    args <- list(
-      scale = 10, type = "admin_1_states_provinces", category = "cultural",
-      destdir = destdir
+    download_zip(url, zip)
+  }
+  if (file.exists(zip)) {
+    states <- sf::st_read(
+      paste0("/vsizip/", normalizePath(zip, winslash = "/"), "/", layer, ".shp"),
+      quiet = TRUE
     )
-    # ne_download() returns only the file name when it downloads, so the
-    # layer is always read with ne_load() afterwards
-    states <- try(do.call(rnaturalearth::ne_load, c(args, returnclass = "sf")), silent = TRUE)
-    if (inherits(states, "try-error")) {
-      do.call(rnaturalearth::ne_download, c(args, load = FALSE))
-      states <- do.call(rnaturalearth::ne_load, c(args, returnclass = "sf"))
-    }
     states <- states[states$adm0_a3 == "DEU", ]
   } else {
+    if (!requireNamespace("rnaturalearthdata", quietly = TRUE)) {
+      stop(
+        "Could not download ", url, " and rnaturalearthdata is not installed. ",
+        "Install rnaturalearthdata, or download the zip by hand into ", destdir, ".",
+        call. = FALSE
+      )
+    }
+    warning(
+      "Could not download the Natural Earth state borders, the maps show the ",
+      "country outline only. Download ", url, " by hand into ", destdir,
+      " to get the state borders.",
+      call. = FALSE
+    )
     countries <- rnaturalearthdata::countries50
     states <- sf::st_as_sf(countries[countries$adm0_a3 == "DEU", ])
   }
   sf::st_transform(sf::st_geometry(states), crs)
+}
+
+# Downloads `url` to `path`; tries the default method and on Windows also
+# "wininet" (system proxy settings). Leaves no partial file behind.
+download_zip <- function(url, path) {
+  methods <- c("auto", if (.Platform$OS.type == "windows") "wininet")
+  old <- options(timeout = max(300, getOption("timeout")))
+  on.exit(options(old), add = TRUE)
+  for (method in methods) {
+    ok <- tryCatch(
+      utils::download.file(url, path, mode = "wb", method = method, quiet = TRUE) == 0,
+      error = function(e) FALSE,
+      warning = function(w) FALSE
+    )
+    if (ok && file.exists(path) && file.size(path) > 0) {
+      return(invisible(TRUE))
+    }
+    unlink(path)
+  }
+  invisible(FALSE)
 }

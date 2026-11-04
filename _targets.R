@@ -72,11 +72,11 @@ list(
   # ground): mean depth to groundwater between dtw_mean_min and dtw_mean_max,
   # maximum depth below dtw_max, the screen position and the screen length
   # up to screen_length_max. Screen position (screen_rule):
-  #   "below": screen top below the water table, at most top_below_max m below
-  #            the mean water table and not above the typical annual low, so
-  #            the screen does not fall dry in the annual cycle
-  #   "spans": screen across the mean water table, its bottom below the annual
-  #            low (top_below_max not used)
+  #   "below": screen top below the mean water table, at most top_below_max m
+  #            deeper, and screen bottom deeper than the typical annual low, so
+  #            the well does not fall dry in the annual cycle
+  #   "spans": screen across the mean water table, its bottom deeper than the
+  #            annual low (top_below_max not used)
   tar_target(
     scenarios,
     tibble::tribble(

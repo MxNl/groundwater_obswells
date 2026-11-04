@@ -253,9 +253,9 @@ plot_flowchart <- function(wells, scenarios, steps, spec, plot_config) {
       short = vapply(seq_len(dplyr::n()), function(i) {
         d <- describe_scenario(scenarios[i, ])
         rule <- if (scenarios$screen_rule[i] == "below") {
-          paste0("screen top ≤ ", scenarios$top_below_max[i], " m below\nthe water table, not dry")
+          paste0("screen top 0\u2013", scenarios$top_below_max[i], " m below the\nwater table, bottom deeper\nthan the annual low")
         } else {
-          "screen across the\nwater table, not dry"
+          "screen across the water\ntable, bottom deeper\nthan the annual low"
         }
         paste0(
           "mean ", scenarios$dtw_mean_min[i], "–", scenarios$dtw_mean_max[i],
