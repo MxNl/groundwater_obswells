@@ -68,13 +68,10 @@ WHERE o.type IN ('U', 'V')
 ORDER BY 1, 2, 3
 "
 
-# Reads tables and columns over one connection. Returns a list of two tibbles.
+# Reads tables and columns. Returns a list of two tibbles.
 fetch_catalog <- function(schemas = db_schemas()) {
-  con <- db_connect()
-  on.exit(db_disconnect(con), add = TRUE)
-
-  tables <- db_query(con, sql_tables)
-  columns <- db_query(con, sql_columns)
+  tables <- db_query(sql_tables)
+  columns <- db_query(sql_columns)
 
   if (!is.null(schemas)) {
     tables <- dplyr::filter(tables, table_schema %in% schemas)

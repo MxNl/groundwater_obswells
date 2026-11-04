@@ -71,16 +71,14 @@ odbc_value <- function(x) {
   paste0("{", gsub("}", "}}", x, fixed = TRUE), "}")
 }
 
-# Opens a connection to the SQL Server database. Close it with
-# db_disconnect().
-db_connect <- function() {
+db_connection_string <- function() {
   check_db_env()
   server <- Sys.getenv("DB_SERVER")
   port <- Sys.getenv("DB_PORT")
   if (nzchar(port)) {
     server <- paste0(server, ",", port) # SQL Server syntax: host,port
   }
-  connection_string <- paste0(
+  paste0(
     "Driver=", odbc_value(Sys.getenv("DB_DRIVER", "ODBC Driver 18 for SQL Server")), ";",
     "Server=", odbc_value(server), ";",
     "Database=", odbc_value(Sys.getenv("DB_NAME")), ";",
@@ -93,21 +91,48 @@ db_connect <- function() {
     # Read-only intent: the analysis never writes to the database.
     "ApplicationIntent=ReadOnly;"
   )
-  DBI::dbConnect(
-    odbc::odbc(),
-    .connection_string = connection_string,
-    # Return 64-bit integers as doubles, which dplyr handles without bit64.
-    bigint = "numeric"
-  )
 }
 
-db_disconnect <- function(con) {
-  DBI::dbDisconnect(con)
+# The connection pool of this R session, created on first use. All queries
+# go through it, so the targets of one tar_make() run share their
+# connections instead of each logging in again. The pool lives in this
+# function's own environment (not in the global environment, where targets
+# would track it) and is closed when R exits, or with db_pool_close().
+db_pool <- local({
+  pool <- NULL
+  state <- environment()
+  reg.finalizer(
+    state,
+    function(e) if (!is.null(e$pool)) try(pool::poolClose(e$pool), silent = TRUE),
+    onexit = TRUE
+  )
+  function(close = FALSE) {
+    if (close) {
+      if (!is.null(pool)) pool::poolClose(pool)
+      pool <<- NULL
+      return(invisible(NULL))
+    }
+    if (is.null(pool) || !DBI::dbIsValid(pool)) {
+      pool <<- pool::dbPool(
+        odbc::odbc(),
+        .connection_string = db_connection_string(),
+        # Return 64-bit integers as doubles, which dplyr handles without bit64.
+        bigint = "numeric",
+        minSize = 1,
+        idleTimeout = 300
+      )
+    }
+    pool
+  }
+})
+
+db_pool_close <- function() {
+  db_pool(close = TRUE)
 }
 
 # Runs `sql` in the database and returns the result as a tibble.
-db_query <- function(con, sql) {
-  tibble::as_tibble(DBI::dbGetQuery(con, sql))
+db_query <- function(sql) {
+  tibble::as_tibble(DBI::dbGetQuery(db_pool(), sql))
 }
 
 # Schemas to include, from DB_SCHEMAS (comma-separated); NULL means all.
