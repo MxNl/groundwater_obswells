@@ -38,9 +38,9 @@ list(
       gwl_id = "well_id",
       gwl_date = NULL,           # NULL: the one date column of gwl_table
       gwl_level = "gwl",         # groundwater level, m a.s.l.
-      x = NULL,                  # coordinate columns of meta_table; NULL: found
-      y = NULL,                  #   by their names (x/y, rw/hw, lon/lat, ...)
-      crs = NULL,                # EPSG code of x/y; NULL: guessed per well
+      x = "x_25832",             # coordinate columns of meta_table; NULL: found
+      y = "y_25832",             #   by their names (x/y, rw/hw, lon/lat, ...)
+      crs = 25832,               # EPSG code of x/y; NULL: guessed per well
 
       # checks of single measurements (on the server)
       gwl_valid_range = c(-100, 3000), # m a.s.l.; outside: error codes like -999
@@ -116,6 +116,11 @@ list(
   tar_target(
     scenario_plots,
     plot_scenarios(scenarios, well_points, scenario_wells, scenario_steps, germany, plot_config, plot_font),
+    format = "file"
+  ),
+  tar_target(
+    sankey_plots,
+    plot_sankeys(well_dtw, scenarios, scenario_steps, well_spec, plot_config, plot_font),
     format = "file"
   ),
   tar_target(

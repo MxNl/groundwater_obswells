@@ -58,8 +58,10 @@ targets::tar_read(well_dtw)            # one row per well
 targets::tar_read(scenario_steps)      # wells per scenario after each criterion
 ```
 
-The figures are written to `plots/`: `flowchart.png` and one
-`scenario_<id>.png` per scenario.
+The figures are written to `plots/`: `flowchart.png`,
+`sankey_wells.png` (where the wells drop out on the way to the usable
+wells), `sankey_scenarios.png` (the same for the criteria of each scenario)
+and one `scenario_<id>.png` per scenario.
 
 ## Depth to groundwater
 
@@ -135,8 +137,12 @@ In all scenarios the screen bottom must be deeper than the annual low.
 Each scenario figure shows the selected wells on a map of Germany, their
 number with the wells left after each criterion, and the distribution of
 the four properties (usable wells in grey, selected wells in colour). The
-flow chart shows the steps from the metadata to the usable wells and the
-scenarios. Font (Noto Sans Display, downloaded from Google Fonts if
+flow chart shows the steps from the metadata to the usable wells and, per
+scenario, its four criteria with the wells left after each. The Sankey
+diagrams show the same as flows: the band is the number of wells left, the
+branches the wells dropped at each step. Flow chart and Sankey diagrams are
+drawn with plain ggplot2 (no extension package). The figures are sized for
+normal screens (11 inches wide). Font (Noto Sans Display, downloaded from Google Fonts if
 missing), colours and captions follow the agriculture_crops plots; the
 settings are in `plot_config`.
 

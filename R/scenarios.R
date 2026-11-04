@@ -93,7 +93,7 @@ describe_scenario <- function(s) {
     spans = "Screen across the mean water table, bottom deeper than the annual low"
   )
   c(
-    dtw_mean = paste0("Mean depth to groundwater ", m(s$dtw_mean_min), "–", m(s$dtw_mean_max), " m"),
+    dtw_mean = paste0("Mean depth to groundwater ", m(s$dtw_mean_min), "\u2013", m(s$dtw_mean_max), " m"),
     dtw_max = paste0("Maximum depth to groundwater less than ", m(s$dtw_max), " m"),
     screen_position = screen,
     screen_length = paste0("Screen length up to ", m(s$screen_length_max), " m")
@@ -104,7 +104,7 @@ describe_scenario <- function(s) {
 
 # Guesses the CRS of each well's coordinates from their ranges (German
 # systems): WGS84 lon/lat, UTM 32N/33N with zone prefix (32xxxxxx), Gauss-
-# Krüger zones 2-5 (first digit of the easting), and plain 6-digit UTM
+# Krueger zones 2-5 (first digit of the easting), and plain 6-digit UTM
 # eastings, assumed to be zone 32N. Returns EPSG codes, NA where none fits.
 guess_crs <- function(x, y) {
   dplyr::case_when(
