@@ -117,36 +117,42 @@ in-memory DuckDB.
 
 ## Scenarios
 
-The scenarios (`scenarios` in `_targets.R`) select usable wells with
-shallow groundwater, where substances from the surface show up with a short
-delay. Each filters by four properties, in m below ground surface:
+The scenarios (`scenarios_fixed` and the optimised one in `_targets.R`)
+select usable wells with shallow groundwater, where substances from the
+surface show up with a short delay. Each applies five criteria, in m below
+ground surface, in this order:
 
 1. mean depth to groundwater between `dtw_mean_min` and `dtw_mean_max`
-2. maximum depth to groundwater (deepest monthly mean in the window) less
-   than `dtw_max`
-3. screen position (`screen_rule`):
-   - `below`: the screen top lies below the mean water table, at most
-     `top_below_max` m deeper, and the screen bottom is deeper than the
-     typical annual low (`dtw_annual_low`, deepest month of each year
-     averaged), so the well does not fall dry in the annual cycle
-   - `spans`: the screen reaches across the mean water table, its bottom
-     deeper than the annual low
-4. screen length up to `screen_length_max`
+2. maximum depth to groundwater (deepest monthly mean of the mean window)
+   less than `dtw_max`
+3. screen top position (`screen_rule`): `below` = 0 to `top_below_max` m
+   below the mean water table; `spans` = above it, so the screen reaches
+   across the water table
+4. not falling dry: the screen bottom is deeper than the typical annual low
+   (`dtw_annual_low` = ground surface minus the lowest monthly mean level of
+   each year of the mean window, averaged over the years)
+5. screen length up to `screen_length_max`
 
-| Scenario | Mean depth | Max depth | Screen | Length |
+| Scenario | Mean depth | Max depth | Screen top | Length |
 |---|---|---|---|---|
-| FARM strict | 1-5 m | < 10 m | top 0-2 m below the water table | <= 2 m |
-| FARM tolerant | 1-5 m | < 10 m | top 0-3 m below the water table | <= 4 m |
-| Very shallow | 0.5-3 m | < 5 m | top 0-1 m below the water table | <= 2 m |
-| Screen at the water table | 1-5 m | < 10 m | across the water table | <= 3 m |
-| Shallow, most wells | 0 m to the fitted limit | < limit + 5 m | top 0-3 m below the water table | <= 4 m |
-
-"Shallow, most wells" is fitted to the data (`optimised_settings`): its
-limit of the mean depth is the shallowest on `depth_grid` (1-15 m) that
-still keeps `keep_share` (80 %) of the wells the deepest limit would keep.
-`scenario_optimisation.png` shows the wells against the limit.
+| FARM strict | 1-5 m | < 10 m | 0-2 m below the water table | <= 2 m |
+| FARM tolerant | 1-5 m | < 10 m | 0-3 m below the water table | <= 4 m |
+| Very shallow | 0.5-3 m | < 5 m | 0-1 m below the water table | <= 2 m |
+| Screen at the water table | 1-5 m | < 10 m | above the water table | <= 3 m |
+| Shallow, most wells | fitted | fitted | fitted | fitted |
 
 In all scenarios the screen bottom must be deeper than the annual low.
+
+"Shallow, most wells" is fitted to the data (`optimised_settings`) over all
+four thresholds: of all combinations on the grids (mean depth limit 1-10 m,
+maximum depth = limit + 1-8 m, screen top 1-5 m below the water table,
+screen length 1-6 m) that keep at least `keep_share` (80 %) of the wells of
+the loosest combination, the strictest one. "Strictest": each threshold is
+scaled from 0 (strictest) to 1 (loosest) on its grid and the weighted sum
+(`weights`, default 1 each) is the smallest. A higher weight keeps a
+threshold stricter, at the cost of the others. `scenario_optimisation.png`
+shows for each threshold how many wells a stricter or looser value would
+give, the others at the chosen values.
 
 Each scenario figure shows the selected wells on a map of Germany, their
 number with the wells left after each criterion, and the distribution of

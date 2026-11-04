@@ -30,20 +30,25 @@ scenario_ranges <- function(s) {
   )
 }
 
-# The four criteria of a scenario in short words, for boxes and lists.
+# The five criteria of a scenario in short words, for boxes and lists.
 scenario_step_labels <- function(s, sep = "\n") {
   m <- function(x) format(x, decimal.mark = ".", trim = TRUE)
   screen <- if (s$screen_rule == "below") {
-    paste0("Screen top 0\u2013", m(s$top_below_max), " m", sep, "below the water table,", sep, "bottom below the annual low")
+    paste0("Screen top 0\u2013", m(s$top_below_max), " m", sep, "below the water table")
   } else {
-    paste0("Screen across the", sep, "water table,", sep, "bottom below the annual low")
+    paste0("Screen top above", sep, "the water table")
   }
   c(
     dtw_mean = paste0("Mean depth", sep, m(s$dtw_mean_min), "\u2013", m(s$dtw_mean_max), " m"),
     dtw_max = paste0("Maximum depth", sep, "< ", m(s$dtw_max), " m"),
-    screen_position = screen,
+    screen_top = screen,
+    not_dry = paste0("Not falling dry: bottom", sep, "below the annual low"),
     screen_length = paste0("Screen length", sep, "\u2264 ", m(s$screen_length_max), " m")
   )
+}
+
+scenario_step_counts <- function(st) {
+  c(st$dtw_mean, st$dtw_max, st$screen_top, st$not_dry, st$screen_length)
 }
 
 # The steps from the metadata to the usable wells: label, wells left, wells
@@ -123,7 +128,7 @@ plot_scenario <- function(s, points, scenario_wells, steps, germany, plot_config
   criteria <- scenario_step_labels(s, sep = " ")
   counts <- tibble::tibble(
     label = c("Usable wells", unname(criteria)),
-    n = c(n_usable, step$dtw_mean, step$dtw_max, step$screen_position, step$screen_length),
+    n = c(n_usable, scenario_step_counts(step)),
     y = -seq_along(label)
   )
   numbers <- ggplot2::ggplot(counts) +
@@ -282,14 +287,14 @@ plot_flowchart <- function(wells, scenarios, steps, spec, plot_config,
       id = s$id,
       colour = s$colour,
       x = sc_x[i],
-      k = 1:4,
-      y = crit_y0 - (0:3) * crit_step,
+      k = 1:5,
+      y = crit_y0 - (0:4) * crit_step,
       label = unname(scenario_step_labels(s)),
-      n = c(st$dtw_mean, st$dtw_max, st$screen_position, st$screen_length)
+      n = scenario_step_counts(st)
     )
   }) |>
     dplyr::bind_rows()
-  leaf_y <- crit_y0 - 4 * crit_step - 0.1
+  leaf_y <- crit_y0 - 5 * crit_step - 0.1
   leaf_h <- 1.05
   leaves <- tibble::tibble(
     x = sc_x,
@@ -349,11 +354,11 @@ plot_flowchart <- function(wells, scenarios, steps, spec, plot_config,
     # criterion boxes and arrows between them
     ggplot2::geom_segment(
       ggplot2::aes(x = x, xend = x, y = y - crit_h / 2, yend = y - crit_step + crit_h / 2),
-      data = dplyr::filter(crit, k < 4), colour = line_col, linewidth = 0.4, arrow = arrow
+      data = dplyr::filter(crit, k < 5), colour = line_col, linewidth = 0.4, arrow = arrow
     ) +
     ggplot2::geom_segment(
       ggplot2::aes(x = x, xend = x, y = y - crit_h / 2, yend = leaf_y + leaf_h / 2),
-      data = dplyr::filter(crit, k == 4), colour = line_col, linewidth = 0.4, arrow = arrow
+      data = dplyr::filter(crit, k == 5), colour = line_col, linewidth = 0.4, arrow = arrow
     ) +
     ggplot2::geom_rect(
       ggplot2::aes(xmin = x - sc_w / 2, xmax = x + sc_w / 2, ymin = y - crit_h / 2, ymax = y + crit_h / 2),
@@ -393,7 +398,7 @@ plot_flowchart <- function(wells, scenarios, steps, spec, plot_config,
     theme_maps(font) +
     ggplot2::theme(plot.title = ggplot2::element_text(margin = ggplot2::margin(b = 14)))
 
-  save_figure(p, file.path(plot_config$dir, "flowchart.png"), width = figure_width, height = 11)
+  save_figure(p, file.path(plot_config$dir, "flowchart.png"), width = figure_width, height = 12)
 }
 
 # Sankey diagrams -------------------------------------------------------------------
@@ -509,13 +514,14 @@ plot_sankeys <- function(wells, scenarios, steps, spec, plot_config,
     st <- steps[steps$scenario_id == s$id, ]
     lab <- scenario_step_labels(s, sep = " ")
     sc_stages <- tibble::tibble(
-      short = c("Usable\nwells", "Mean\ndepth", "Maximum\ndepth", "Screen\nposition", "Screen\nlength"),
-      n = c(st$usable, st$dtw_mean, st$dtw_max, st$screen_position, st$screen_length),
+      short = c("Usable\nwells", "Mean\ndepth", "Maximum\ndepth", "Screen\ntop", "Not\ndry", "Screen\nlength"),
+      n = c(st$usable, scenario_step_counts(st)),
       reason = c(
         NA,
         paste0("mean not ", sub("Mean depth ", "", lab[["dtw_mean"]])),
         paste0("maximum \u2265 ", s$dtw_max, " m"),
-        if (s$screen_rule == "below") "screen not right below the water table" else "screen not across the water table",
+        if (s$screen_rule == "below") "screen top not right below the water table" else "screen top not above the water table",
+        "falls dry at the annual low",
         paste0("screen > ", s$screen_length_max, " m")
       )
     )
@@ -530,7 +536,7 @@ plot_sankeys <- function(wells, scenarios, steps, spec, plot_config,
         lineheight = 1.15,
         label = paste(
           "How to read: from left to right, each scenario",
-          "applies its four criteria to the usable wells.",
+          "applies its five criteria to the usable wells.",
           "The coloured band shows the wells left after",
           "each criterion, the grey branches the wells",
           "dropped there. The last number is the number",
@@ -688,56 +694,57 @@ plot_sankey_combined <- function(wells, scenarios, scenario_wells, steps, spec, 
 
 # Optimised scenario ------------------------------------------------------------------
 
-# Wells of the optimised scenario against the limit of the mean depth, with
-# the chosen limit and the share of wells it keeps.
+optimised_threshold_labels <- c(
+  dtw_mean_max = "Limit of the mean depth (m)",
+  dtw_max_extra = "Maximum depth: limit + ... (m)",
+  top_below_max = "Screen top: up to ... m below the water table",
+  screen_length_max = "Screen length up to ... (m)"
+)
+
+# Profiles of the optimised scenario: for each of the four thresholds the
+# wells along its grid, the other thresholds at the chosen values. Shows
+# how many wells a stricter or looser value would give.
 plot_optimisation <- function(optimisation, plot_config,
                               font = setup_plot_font(plot_config$font)) {
   setup_plot_font(plot_config$font)
-  curve <- optimisation$curve
   s <- optimisation$scenario
-  chosen <- dplyr::filter(curve, chosen)
   target <- optimisation$keep_share * optimisation$n_ref
+  profiles <- optimisation$profiles |>
+    dplyr::mutate(threshold = factor(
+      optimised_threshold_labels[threshold], levels = optimised_threshold_labels
+    ))
+  chosen <- dplyr::filter(profiles, chosen)
 
-  p <- ggplot2::ggplot(curve, ggplot2::aes(dtw_mean_max, n)) +
+  p <- ggplot2::ggplot(profiles, ggplot2::aes(value, n)) +
     ggplot2::geom_hline(yintercept = target, colour = "grey60", linewidth = 0.3, linetype = "22") +
-    ggplot2::annotate(
-      "text", x = max(curve$dtw_mean_max), y = target, vjust = -0.6, hjust = 1,
-      family = font, size = 3.3, colour = "grey40",
-      label = paste0(100 * optimisation$keep_share, " % of the wells at ", max(curve$dtw_mean_max), " m")
-    ) +
-    ggplot2::geom_line(colour = "grey50", linewidth = 0.6) +
-    ggplot2::geom_point(colour = "grey50", size = 1.4) +
-    ggplot2::geom_segment(
-      ggplot2::aes(x = dtw_mean_max, xend = dtw_mean_max, y = 0, yend = n),
-      data = chosen, colour = s$colour, linewidth = 0.6
-    ) +
+    ggplot2::geom_line(colour = "grey55", linewidth = 0.6) +
+    ggplot2::geom_point(colour = "grey55", size = 1.3) +
     ggplot2::geom_point(data = chosen, colour = s$colour, size = 3) +
     ggplot2::geom_text(
-      ggplot2::aes(label = paste0(dtw_mean_max, " m: ", label_n(n), " wells")),
-      data = chosen, hjust = -0.12, vjust = 1.4, family = font, size = 3.8,
+      ggplot2::aes(label = paste0(value, ": ", label_n(n))),
+      data = chosen, vjust = -1, family = font, size = 3.5,
       colour = s$colour, fontface = "bold"
     ) +
-    ggplot2::scale_x_continuous(
-      breaks = seq(0, max(curve$dtw_mean_max), 1),
-      labels = function(x) paste(x, "m")
-    ) +
-    ggplot2::scale_y_continuous(labels = label_n, limits = c(0, NA), expand = ggplot2::expansion(c(0, 0.08))) +
+    ggplot2::facet_wrap(ggplot2::vars(threshold), scales = "free_x", ncol = 2) +
+    ggplot2::scale_y_continuous(labels = label_n, limits = c(0, NA), expand = ggplot2::expansion(c(0, 0.15))) +
     ggplot2::labs(
-      title = paste0(s$name, ": fitting the depth limit"),
+      title = paste0(s$name, ": ", label_n(optimisation$n_chosen), " wells"),
       subtitle = paste0(
-        "Wells that meet the scenario for each limit of the mean depth to ",
-        "groundwater (maximum depth = limit + ", s$dtw_max - s$dtw_mean_max,
-        " m; screen top 0\u2013", s$top_below_max, " m below the water table, ",
-        "length \u2264 ", s$screen_length_max, " m). The ",
-        colour_word("chosen limit", s$colour), " is the shallowest that keeps ",
-        100 * optimisation$keep_share, " % of the wells."
+        "The ", colour_word("chosen thresholds", s$colour), " are the strictest ",
+        "combination that keeps ", 100 * optimisation$keep_share, " % of the ",
+        label_n(optimisation$n_ref), " wells of the loosest one (dashed line). ",
+        "Each panel varies one threshold, the others at the chosen values."
       ),
-      x = "Limit of the mean depth to groundwater", y = "Wells",
+      x = NULL, y = "Wells",
       caption = plot_config$caption
     ) +
-    theme_charts(font)
+    theme_charts(font, base_size = 12) +
+    ggplot2::theme(
+      strip.text = ggplot2::element_text(face = "bold", hjust = 0),
+      panel.spacing = grid::unit(1.2, "lines")
+    )
 
-  save_figure(p, file.path(plot_config$dir, "scenario_optimisation.png"), width = figure_width, height = 6)
+  save_figure(p, file.path(plot_config$dir, "scenario_optimisation.png"), width = figure_width, height = 7)
 }
 
 # Missing screen depths -----------------------------------------------------------------

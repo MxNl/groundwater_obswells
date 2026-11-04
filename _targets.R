@@ -71,15 +71,13 @@ list(
   tar_target(gwl_checks, summarise_gwl_checks(well_dtw)),
 
   # Scenarios -----------------------------------------------------------------------
-  # Each scenario filters the usable wells by four properties (m below
-  # ground): mean depth to groundwater between dtw_mean_min and dtw_mean_max,
-  # maximum depth below dtw_max, the screen position and the screen length
-  # up to screen_length_max. Screen position (screen_rule):
-  #   "below": screen top below the mean water table, at most top_below_max m
-  #            deeper, and screen bottom deeper than the typical annual low, so
-  #            the well does not fall dry in the annual cycle
-  #   "spans": screen across the mean water table, its bottom deeper than the
-  #            annual low (top_below_max not used)
+  # Each scenario filters the usable wells by five criteria (m below
+  # ground), in this order: mean depth to groundwater between dtw_mean_min
+  # and dtw_mean_max; maximum depth below dtw_max; screen top position
+  # (screen_rule "below": 0 to top_below_max m below the mean water table;
+  # "spans": above it, so the screen reaches across); not falling dry (screen
+  # bottom deeper than the typical annual low); screen length up to
+  # screen_length_max.
   tar_target(
     scenarios_fixed,
     tibble::tribble(
@@ -94,16 +92,25 @@ list(
         "Screens across the water table sample the uppermost, youngest groundwater, where substances from the surface arrive first."
     )
   ),
-  # Scenario fitted to the data: the shallowest limit of the mean depth on
-  # depth_grid that keeps at least keep_share of the wells the deepest limit
-  # would keep; maximum depth = limit + dtw_max_extra; the other criteria fixed
+  # Scenario fitted to the data over all four thresholds: of all combinations
+  # on the grids that keep at least keep_share of the wells of the loosest
+  # combination, the strictest (each threshold scaled 0..1 on its grid, the
+  # smallest sum). Maximum depth = dtw_mean_max + dtw_max_extra. Screen top
+  # below the water table and "not falling dry" as in the other scenarios.
   tar_target(
     optimised_settings,
     list(
       id = "shallow_most_wells", name = "Shallow, most wells", colour = "#6A4C93",
-      dtw_mean_min = 0, dtw_max_extra = 5,
-      screen_rule = "below", top_below_max = 3, screen_length_max = 4,
-      depth_grid = seq(1, 15, by = 0.5), keep_share = 0.8
+      dtw_mean_min = 0, keep_share = 0.8,
+      grids = list(
+        dtw_mean_max = seq(1, 10, by = 0.5),
+        dtw_max_extra = 1:8,
+        top_below_max = 1:5,
+        screen_length_max = 1:6
+      ),
+      # weight of each threshold when choosing the strictest combination:
+      # higher = loosening it costs more, so it stays stricter
+      weights = list(dtw_mean_max = 1, dtw_max_extra = 1, top_below_max = 1, screen_length_max = 1)
     )
   ),
   tar_target(scenario_optimisation, optimise_shallow_scenario(well_dtw, optimised_settings)),
