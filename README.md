@@ -8,13 +8,21 @@ and time series from a PostgreSQL database.
 1. Install the R packages:
 
    ```r
-   install.packages(c("targets", "duckdb", "DBI", "dplyr", "tibble"))
+   install.packages(c("targets", "duckdb", "DBI", "dplyr", "tibble", "keyring"))
    ```
 
-2. Copy `.Renviron.example` to `.Renviron` and fill in the connection details.
-   `.Renviron` is git-ignored, so never commit the credentials anywhere else.
-   You can keep the password in `~/.pgpass` instead of `PGPASSWORD`.
+2. Copy `.Renviron.example` to `.Renviron` and fill in server, port, database
+   and user. `.Renviron` is git-ignored, so never commit these anywhere else.
 3. Restart R in the project folder, so it reads `.Renviron`.
+4. Store the password once in the system keyring (Windows Credential Manager,
+   macOS Keychain, Secret Service on Linux); this prompts for it:
+
+   ```r
+   targets::tar_source("R")
+   set_pg_password()
+   ```
+
+   `PGPASSWORD` in `.Renviron` or a `~/.pgpass` file work as well.
 
 The first connection downloads DuckDB's `postgres` extension from
 extensions.duckdb.org, so that host needs to be reachable once.
