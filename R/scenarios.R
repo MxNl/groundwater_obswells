@@ -149,3 +149,18 @@ wells_to_points <- function(wells, crs = NULL, crs_target = 25832) {
     tibble::as_tibble() |>
     dplyr::arrange(well_id)
 }
+
+# One scenario per usable well, so the wells can be split into groups that do
+# not overlap (scenarios do overlap: FARM strict is part of FARM tolerant):
+# the first scenario in the order of the scenarios table that the well
+# meets, or "none". Returns well_id, scenario_id and the group label.
+assign_scenario_groups <- function(scenario_wells, scenarios) {
+  order <- match(scenario_wells$scenario_id, scenarios$id)
+  first <- scenario_wells |>
+    dplyr::mutate(order = order) |>
+    dplyr::filter(selected) |>
+    dplyr::slice_min(order, n = 1, by = well_id, with_ties = FALSE)
+  dplyr::distinct(scenario_wells, well_id) |>
+    dplyr::left_join(dplyr::select(first, well_id, scenario_id), by = "well_id") |>
+    dplyr::mutate(scenario_id = dplyr::coalesce(scenario_id, "none"))
+}

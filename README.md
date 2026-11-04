@@ -60,7 +60,9 @@ targets::tar_read(scenario_steps)      # wells per scenario after each criterion
 
 The figures are written to `plots/`: `flowchart.png`,
 `sankey_wells.png` (where the wells drop out on the way to the usable
-wells), `sankey_scenarios.png` (the same for the criteria of each scenario)
+wells), `sankey_scenarios.png` (the same for the criteria of each scenario),
+`sankey_combined.png` (preprocessing and scenarios in one diagram; each
+usable well is counted once, in the first scenario of the list it meets)
 and one `scenario_<id>.png` per scenario.
 
 ## Depth to groundwater

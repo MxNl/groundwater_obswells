@@ -557,3 +557,134 @@ plot_sankeys <- function(wells, scenarios, steps, spec, plot_config,
   )
   c(path_overview, path_scenarios)
 }
+
+# Combined Sankey diagram ------------------------------------------------------------
+
+# One Sankey diagram from the metadata through the preprocessing to the
+# scenarios. Scenarios overlap (FARM strict is part of FARM tolerant), so at
+# the end every usable well goes to one group only: the first scenario in
+# the order of the scenarios table it meets, or none. The labels give the
+# wells of the group and, where earlier scenarios took some of its wells,
+# the scenario's total.
+plot_sankey_combined <- function(wells, scenarios, scenario_wells, steps, spec, plot_config,
+                                 font = setup_plot_font(plot_config$font)) {
+  setup_plot_font(plot_config$font)
+  stages <- well_stages(wells, spec)
+  parts <- sankey_parts(stages)
+  k <- nrow(stages)
+  n0 <- stages$n[1]
+
+  groups <- assign_scenario_groups(scenario_wells, scenarios) |>
+    dplyr::count(scenario_id, name = "n_group")
+  group_tbl <- tibble::tibble(
+    scenario_id = c(scenarios$id, "none"),
+    name = c(scenarios$name, "No scenario"),
+    colour = c(scenarios$colour, "grey80"),
+    text_colour = c(scenarios$colour, "grey45"),
+    total = c(steps$screen_length[match(scenarios$id, steps$scenario_id)], NA)
+  ) |>
+    dplyr::left_join(groups, by = "scenario_id") |>
+    dplyr::mutate(n_group = dplyr::coalesce(n_group, 0L)) |>
+    dplyr::filter(n_group > 0)
+
+  # stacked groups at the end of the band, separated by gaps
+  gap <- 0.025
+  h <- group_tbl$n_group / n0
+  src_top <- -c(0, cumsum(h)[-length(h)])
+  dst_top <- src_top - gap * (seq_along(h) - 1)
+  x0 <- k - 1 + 0.35
+  x1 <- x0 + 0.9
+  x2 <- x1 + 0.25
+  curve <- function(xa, xb, ya, yb, n = 30) {
+    t <- seq(0, 1, length.out = n)
+    list(x = xa + (xb - xa) * t, y = ya + (yb - ya) * (3 * t^2 - 2 * t^3))
+  }
+  split <- lapply(seq_along(h), function(i) {
+    upper <- curve(x0, x1, src_top[i], dst_top[i])
+    lower <- curve(x0, x1, src_top[i] - h[i], dst_top[i] - h[i])
+    tibble::tibble(
+      group = i,
+      x = c(upper$x, x2, x2, rev(lower$x)),
+      y = c(upper$y, dst_top[i], dst_top[i] - h[i], rev(lower$y))
+    )
+  }) |>
+    dplyr::bind_rows()
+
+  # labels right of the groups, pushed apart where groups are thin
+  centre <- dst_top - h / 2
+  min_step <- 0.075
+  label_y <- centre
+  for (i in seq_along(label_y)[-1]) {
+    label_y[i] <- min(label_y[i], label_y[i - 1] - min_step)
+  }
+  earlier <- !is.na(group_tbl$total) & group_tbl$total > group_tbl$n_group
+  group_labels <- group_tbl |>
+    dplyr::mutate(
+      x = x2 + 0.12,
+      y = label_y,
+      y_line = centre,
+      label = dplyr::case_when(
+        scenario_id == "none" ~ paste0(name, ": ", label_n(n_group)),
+        earlier ~ paste0(name, ": ", label_n(n_group), " more (", label_n(total), " in total)"),
+        .default = paste0(name, ": ", label_n(n_group))
+      )
+    )
+
+  p <- ggplot2::ggplot() +
+    ggplot2::geom_polygon(
+      ggplot2::aes(x, y, group = step),
+      data = parts$branches, fill = "grey75", colour = "grey75", linewidth = 0.2
+    ) +
+    ggplot2::geom_rect(
+      ggplot2::aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+      data = parts$band, fill = "grey45", colour = "grey45", linewidth = 0.2
+    ) +
+    ggplot2::geom_polygon(
+      ggplot2::aes(x, y, group = group),
+      data = split, fill = group_tbl$colour[split$group],
+      colour = group_tbl$colour[split$group], linewidth = 0.2
+    ) +
+    ggplot2::geom_segment(
+      ggplot2::aes(x = x2 + 0.02, xend = x - 0.03, y = y_line, yend = y),
+      data = group_labels, colour = "grey60", linewidth = 0.25
+    ) +
+    ggplot2::geom_text(
+      ggplot2::aes(x, y, label = label),
+      data = group_labels, hjust = 0, family = font, size = 3.2, colour = group_labels$text_colour,
+      fontface = "bold"
+    ) +
+    ggplot2::geom_text(
+      ggplot2::aes(x, 0.04, label = label),
+      data = parts$stage_labels, vjust = 0, family = font, size = 3.2,
+      colour = "grey15", lineheight = 0.95
+    ) +
+    ggplot2::annotate(
+      "text", x = (x0 + x2) / 2, y = 0.04, vjust = 0, family = font, size = 3.2,
+      colour = "grey15", lineheight = 0.95, label = "Scenario\n"
+    ) +
+    ggplot2::geom_text(
+      ggplot2::aes(x, y, label = label),
+      data = parts$labels, vjust = 1, family = font, size = 2.9,
+      colour = "grey40", lineheight = 0.95
+    ) +
+    ggplot2::coord_cartesian(
+      xlim = c(-0.55, x2 + 3.3),
+      ylim = c(min(parts$ylim[1], min(dst_top - h) - 0.05), parts$ylim[2]),
+      expand = FALSE, clip = "off"
+    ) +
+    ggplot2::labs(
+      title = "From the well database to the scenarios",
+      subtitle = paste0(
+        "The band shows the wells left after each step, the grey branches ",
+        "the wells dropped. At the end, each usable well is counted once, in ",
+        "the first scenario it meets (in the order of the list)."
+      ),
+      caption = plot_config$caption
+    ) +
+    theme_maps(font)
+
+  save_figure(
+    p, file.path(plot_config$dir, "sankey_combined.png"),
+    width = figure_width, height = 6.5
+  )
+}

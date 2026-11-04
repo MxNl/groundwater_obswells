@@ -124,6 +124,11 @@ list(
     format = "file"
   ),
   tar_target(
+    sankey_combined_plot,
+    plot_sankey_combined(well_dtw, scenarios, scenario_wells, scenario_steps, well_spec, plot_config, plot_font),
+    format = "file"
+  ),
+  tar_target(
     flowchart_plot,
     plot_flowchart(well_dtw, scenarios, scenario_steps, well_spec, plot_config, plot_font),
     format = "file"
