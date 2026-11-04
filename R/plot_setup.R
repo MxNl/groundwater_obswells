@@ -117,26 +117,46 @@ save_figure <- function(plot, path, width, height) {
 # web, which fails behind many company proxies. If the download fails, the
 # country outline of the rnaturalearthdata package (1:50 m, no state
 # borders, no download) is used. To provide the file by hand, put
-# ne_10m_admin_1_states_provinces.zip, or the unpacked shapefile as
-# rnaturalearth stores it (e.g. copied from another project's cache), into
-# cache/naturalearth/.
-read_germany <- function(crs = 25832) {
-  destdir <- "cache/naturalearth"
-  layer <- "ne_10m_admin_1_states_provinces"
-  shp <- file.path(destdir, paste0(layer, ".shp"))
-  zip <- file.path(destdir, paste0(layer, ".zip"))
-  url <- paste0("https://naciscdn.org/naturalearth/10m/cultural/", layer, ".zip")
+# ne_10m_admin_1_states_provinces.zip, or the layer as rnaturalearth stores
+# it (.shp or .gpkg, e.g. copied from another project's cache), into
+# cache/naturalearth/ or a subfolder of it.
+naturalearth_dir <- "cache/naturalearth"
+naturalearth_layer <- "ne_10m_admin_1_states_provinces"
 
-  if (!file.exists(shp) && !file.exists(zip)) {
-    dir.create(destdir, showWarnings = FALSE, recursive = TRUE)
-    download_zip(url, zip)
+# The files in the Natural Earth cache, so the pipeline notices when one is
+# added (the target that reads the borders depends on this list).
+list_naturalearth_files <- function() {
+  files <- list.files(naturalearth_dir, recursive = TRUE, full.names = TRUE)
+  tibble::tibble(file = files, modified = file.mtime(files), size = file.size(files))
+}
+
+# The state borders file in the cache: the layer (.shp or .gpkg) or its zip,
+# in the folder or a subfolder. NULL if none is there.
+find_naturalearth_source <- function() {
+  files <- list.files(naturalearth_dir, recursive = TRUE, full.names = TRUE)
+  layer_file <- files[grepl(paste0("^", naturalearth_layer, "\\.(shp|gpkg)$"), basename(files))]
+  if (length(layer_file) > 0) {
+    return(layer_file[1])
   }
-  source <- if (file.exists(shp)) {
-    shp
-  } else if (file.exists(zip)) {
-    paste0("/vsizip/", normalizePath(zip, winslash = "/"), "/", layer, ".shp")
+  zip <- files[basename(files) == paste0(naturalearth_layer, ".zip")]
+  if (length(zip) > 0) {
+    return(paste0("/vsizip/", normalizePath(zip[1], winslash = "/"), "/", naturalearth_layer, ".shp"))
+  }
+  NULL
+}
+
+read_germany <- function(crs = 25832, files = NULL) {
+  destdir <- naturalearth_dir
+  url <- paste0("https://naciscdn.org/naturalearth/10m/cultural/", naturalearth_layer, ".zip")
+
+  source <- find_naturalearth_source()
+  if (is.null(source)) {
+    dir.create(destdir, showWarnings = FALSE, recursive = TRUE)
+    download_zip(url, file.path(destdir, paste0(naturalearth_layer, ".zip")))
+    source <- find_naturalearth_source()
   }
   if (!is.null(source)) {
+    message("State borders from ", source)
     states <- sf::st_read(source, quiet = TRUE)
     states <- states[states$adm0_a3 == "DEU", ]
   } else {
@@ -148,9 +168,9 @@ read_germany <- function(crs = 25832) {
       )
     }
     warning(
-      "Could not download the Natural Earth state borders, the maps show the ",
-      "country outline only. Download ", url, " by hand into ", destdir,
-      " to get the state borders.",
+      "No Natural Earth state borders in ", destdir, " and the download failed, ",
+      "the maps show the country outline only. Put ", naturalearth_layer,
+      ".shp (with its .dbf, .shx, .prj) or the zip from ", url, " into ", destdir, ".",
       call. = FALSE
     )
     countries <- rnaturalearthdata::countries50

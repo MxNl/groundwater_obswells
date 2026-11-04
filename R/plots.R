@@ -26,8 +26,11 @@ scenario_ranges <- function(s) {
 # their number with the wells left after each criterion, and the
 # distribution of the four properties (all usable wells in grey, the
 # selected in the scenario colour). Returns the path of the PNG.
-plot_scenario <- function(s, points, scenario_wells, steps, germany, plot_config) {
-  font <- setup_plot_font(plot_config$font)
+# `font`: the font family from setup_plot_font() (target plot_font, so the
+# plots are redrawn when the font becomes available); registered again here,
+# as the plot may be drawn in another R session.
+plot_scenario <- function(s, points, scenario_wells, steps, germany, plot_config, font) {
+  setup_plot_font(plot_config$font)
   colour <- s$colour
   selected_ids <- scenario_wells$well_id[scenario_wells$scenario_id == s$id & scenario_wells$selected]
   usable <- dplyr::filter(points, usable) |>
@@ -181,18 +184,20 @@ plot_scenario <- function(s, points, scenario_wells, steps, germany, plot_config
   )
 }
 
-plot_scenarios <- function(scenarios, points, scenario_wells, steps, germany, plot_config) {
+plot_scenarios <- function(scenarios, points, scenario_wells, steps, germany, plot_config,
+                           font = setup_plot_font(plot_config$font)) {
   vapply(
     seq_len(nrow(scenarios)),
-    function(i) plot_scenario(scenarios[i, ], points, scenario_wells, steps, germany, plot_config),
+    function(i) plot_scenario(scenarios[i, ], points, scenario_wells, steps, germany, plot_config, font),
     character(1)
   )
 }
 
 # Flow chart of the analysis: the wells left after each step from the
 # metadata to the usable wells, what drops out, and the scenarios.
-plot_flowchart <- function(wells, scenarios, steps, spec, plot_config) {
-  font <- setup_plot_font(plot_config$font)
+plot_flowchart <- function(wells, scenarios, steps, spec, plot_config,
+                           font = setup_plot_font(plot_config$font)) {
+  setup_plot_font(plot_config$font)
   m <- dplyr::filter(wells, in_meta)
   has_gs <- !is.na(m$elev_gs)
   has_gwl <- has_gs & !is.na(m$gwl_mean)

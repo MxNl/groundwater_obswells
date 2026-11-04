@@ -106,17 +106,21 @@ list(
     )
   ),
   tar_target(well_points, wells_to_points(well_dtw, crs = well_config$crs)),
-  tar_target(germany, read_germany()),
+  # the cache folders are listed on every run, so borders and plots are
+  # updated when files are added there (state borders, fonts)
+  tar_target(naturalearth_files, list_naturalearth_files(), cue = tar_cue(mode = "always")),
+  tar_target(germany, read_germany(files = naturalearth_files)),
+  tar_target(plot_font, setup_plot_font(plot_config$font), cue = tar_cue(mode = "always")),
   tar_target(scenario_wells, evaluate_scenarios(well_dtw, scenarios)),
   tar_target(scenario_steps, count_scenario_steps(scenario_wells, scenarios)),
   tar_target(
     scenario_plots,
-    plot_scenarios(scenarios, well_points, scenario_wells, scenario_steps, germany, plot_config),
+    plot_scenarios(scenarios, well_points, scenario_wells, scenario_steps, germany, plot_config, plot_font),
     format = "file"
   ),
   tar_target(
     flowchart_plot,
-    plot_flowchart(well_dtw, scenarios, scenario_steps, well_spec, plot_config),
+    plot_flowchart(well_dtw, scenarios, scenario_steps, well_spec, plot_config, plot_font),
     format = "file"
   )
 )

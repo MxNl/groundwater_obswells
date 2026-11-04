@@ -132,7 +132,10 @@ db_pool_close <- function() {
 
 # Runs `sql` in the database and returns the result as a tibble.
 db_query <- function(sql) {
-  tibble::as_tibble(DBI::dbGetQuery(db_pool(), sql))
+  # explicit checkout, so the connection is always returned to the pool
+  con <- pool::poolCheckout(db_pool())
+  on.exit(pool::poolReturn(con), add = TRUE)
+  tibble::as_tibble(DBI::dbGetQuery(con, sql))
 }
 
 # Schemas to include, from DB_SCHEMAS (comma-separated); NULL means all.
