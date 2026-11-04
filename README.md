@@ -9,7 +9,11 @@ and time series from a Microsoft SQL Server database.
    ([ODBC Driver 18 for SQL Server](https://learn.microsoft.com/sql/connect/odbc/download-odbc-driver-for-sql-server)):
 
    ```r
-   install.packages(c("targets", "odbc", "pool", "duckdb", "DBI", "dplyr", "tibble", "keyring"))
+   install.packages(c(
+     "targets", "odbc", "pool", "duckdb", "DBI", "dplyr", "tibble", "tidyr", "keyring",
+     "sf", "ggplot2", "ggridges", "patchwork", "marquee", "scales", "ragg",
+     "systemfonts", "rnaturalearth"
+   ))
    ```
 
 2. Create `.Renviron` in the project folder with the connection details.
@@ -51,7 +55,11 @@ targets::tar_read(db_columns)          # one row per column
 targets::tar_read(well_availability)   # how far the data go, in numbers
 targets::tar_read(gwl_checks)          # measurements removed by the checks
 targets::tar_read(well_dtw)            # one row per well
+targets::tar_read(scenario_steps)      # wells per scenario after each criterion
 ```
+
+The figures are written to `plots/`: `flowchart.png` and one
+`scenario_<id>.png` per scenario.
 
 ## Depth to groundwater
 
@@ -95,6 +103,46 @@ the measurements removed by the checks.
 
 Steps 1-2 run in SQL Server (one scan of the table), steps 3-5 in an
 in-memory DuckDB.
+
+## Scenarios
+
+The scenarios (`scenarios` in `_targets.R`) select usable wells with
+shallow groundwater, where substances from the surface show up with a short
+delay. Each filters by four properties, in m below ground surface:
+
+1. mean depth to groundwater between `dtw_mean_min` and `dtw_mean_max`
+2. maximum depth to groundwater (deepest monthly mean in the window) less
+   than `dtw_max`
+3. screen position (`screen_rule`):
+   - `below`: the screen top lies below the water table, at most
+     `top_below_max` m below the mean water table and not above the typical
+     annual low (`dtw_annual_low`, deepest month of each year averaged), so
+     the screen does not fall dry in the annual cycle
+   - `spans`: the screen reaches across the mean water table, its bottom
+     below the annual low
+4. screen length up to `screen_length_max`
+
+| Scenario | Mean depth | Max depth | Screen | Length |
+|---|---|---|---|---|
+| FARM strict | 1-5 m | < 10 m | top 0-2 m below the water table | <= 2 m |
+| FARM tolerant | 1-5 m | < 10 m | top 0-3 m below the water table | <= 4 m |
+| Very shallow | 0.5-3 m | < 5 m | top 0-1 m below the water table | <= 2 m |
+| Screen at the water table | 1-5 m | < 10 m | across the water table | <= 3 m |
+| Extended depth | 1-8 m | < 12 m | top 0-3 m below the water table | <= 4 m |
+
+Each scenario figure shows the selected wells on a map of Germany, their
+number with the wells left after each criterion, and the distribution of
+the four properties (usable wells in grey, selected wells in colour). The
+flow chart shows the steps from the metadata to the usable wells and the
+scenarios. Font (Noto Sans Display, downloaded from Google Fonts if
+missing), colours and captions follow the agriculture_crops plots; the
+settings are in `plot_config`.
+
+Coordinates: the columns are found by name (x/y, rw/hw, lon/lat, ...) and
+their coordinate system is guessed from the value ranges per well (WGS84,
+UTM 32/33 with zone prefix, Gauss-Krüger, plain UTM taken as zone 32). Set
+`x`, `y` and `crs` in `well_config` if this goes wrong; the guess is
+reported when the pipeline runs.
 
 ## How it works
 

@@ -3,8 +3,10 @@
 .pgpass
 *.env
 
-# targets store ------------------------------------------------------------------
+# targets store, downloads (fonts, Natural Earth) and plots ----------------------
 _targets/
+cache/
+plots/
 
 # data files and outputs ---------------------------------------------------------
 *.csv

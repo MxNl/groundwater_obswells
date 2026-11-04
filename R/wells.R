@@ -51,10 +51,23 @@ resolve_well_spec <- function(config, columns, tables) {
   }
 
   meta_schema <- find_table(config$meta_table)
+  meta_cols <- columns$column_name[
+    columns$table_schema == meta_schema & columns$table_name == config$meta_table
+  ]
+  x_col <- config$x %||% find_coordinate_column(meta_cols, "x")
+  y_col <- config$y %||% find_coordinate_column(meta_cols, "y")
+  if (is.null(x_col) || is.null(y_col)) {
+    stop(
+      "Could not find the coordinate columns of ", config$meta_table,
+      ". Set x and y in well_config (_targets.R). Columns: ",
+      paste(meta_cols, collapse = ", "),
+      call. = FALSE
+    )
+  }
   gwl_schema <- find_table(config$gwl_table)
   check_columns(
     meta_schema, config$meta_table,
-    c(config$meta_id, config$elev_gs, config$screen_top, config$screen_bot)
+    c(config$meta_id, config$elev_gs, config$screen_top, config$screen_bot, x_col, y_col)
   )
 
   date_col <- config$gwl_date
@@ -83,7 +96,28 @@ resolve_well_spec <- function(config, columns, tables) {
   spec$gwl_date <- date_col
   spec$meta_n_rows <- n_rows(meta_schema, config$meta_table)
   spec$gwl_n_rows <- n_rows(gwl_schema, config$gwl_table)
+  spec$x <- x_col
+  spec$y <- y_col
   spec
+}
+
+# Coordinate column by its name: exact names first, then name prefixes
+# (e.g. "x_utm", "lon_wgs84").
+find_coordinate_column <- function(columns, axis) {
+  names <- if (axis == "x") {
+    c("x", "xcoord", "x_coord", "coord_x", "rw", "rechtswert", "ostwert",
+      "east", "easting", "utm_x", "lon", "lng", "long", "longitude")
+  } else {
+    c("y", "ycoord", "y_coord", "coord_y", "hw", "hochwert", "nordwert",
+      "north", "northing", "utm_y", "lat", "latitude")
+  }
+  lower <- tolower(columns)
+  hit <- columns[lower %in% names]
+  if (length(hit) == 0) {
+    prefix <- paste0("^(", paste(names, collapse = "|"), ")[_ .]")
+    hit <- columns[grepl(prefix, lower)]
+  }
+  if (length(hit) == 0) NULL else hit[1]
 }
 
 # The metadata columns needed, one row per metadata record.
@@ -92,10 +126,13 @@ fetch_well_meta <- function(spec) {
     "SELECT CAST(%s AS nvarchar(100)) AS well_id,
             CAST(%s AS float) AS elev_gs,
             CAST(%s AS float) AS screen_top,
-            CAST(%s AS float) AS screen_bot
+            CAST(%s AS float) AS screen_bot,
+            CAST(%s AS float) AS x,
+            CAST(%s AS float) AS y
      FROM %s.%s",
     sql_ident(spec$meta_id), sql_ident(spec$elev_gs),
     sql_ident(spec$screen_top), sql_ident(spec$screen_bot),
+    sql_ident(spec$x), sql_ident(spec$y),
     sql_ident(spec$meta_schema), sql_ident(spec$meta_table)
   )
   db_query(sql)
@@ -205,6 +242,8 @@ month_date <- function(month_index) {
 #     months and seasons covered
 #   - mean, sd, min and max of the monthly means, and the seasonal mean: mean
 #     of the 12 calendar-month means, only if all 12 calendar months have data
+#   - the annual low: lowest monthly mean of each year, averaged over the
+#     years with at least 6 months of data
 gwl_window_stats_sql <- function(spec) {
   sprintf(
     "WITH m AS (
@@ -244,6 +283,17 @@ kept AS (
   FROM marked
   WHERE NOT spike
 ),
+-- the lowest monthly level of each year, averaged over the years with at
+-- least 6 months of data (all years if none has): the typical annual low
+annual AS (
+  SELECT well_id, month_index // 12 AS obs_year, min(gwl) AS gwl_low, count(*) AS n
+  FROM kept GROUP BY well_id, month_index // 12
+),
+annual_low AS (
+  SELECT well_id,
+         coalesce(avg(gwl_low) FILTER (WHERE n >= 6), avg(gwl_low)) AS gwl_annual_low
+  FROM annual GROUP BY well_id
+),
 seasonal AS (
   SELECT well_id,
          CASE WHEN count(*) = 12 THEN avg(gwl) END AS gwl_mean_seasonal
@@ -282,11 +332,13 @@ SELECT counts.*,
        spikes.n_months_spike,
        window_stats.* EXCLUDE (well_id),
        window_stats.n_months_window / %3$d AS coverage_window,
-       seasonal.gwl_mean_seasonal
+       seasonal.gwl_mean_seasonal,
+       annual_low.gwl_annual_low
 FROM counts
 LEFT JOIN spikes USING (well_id)
 LEFT JOIN window_stats USING (well_id)
 LEFT JOIN seasonal USING (well_id)
+LEFT JOIN annual_low USING (well_id)
 ORDER BY well_id",
     sql_number(spec$spike_mad), sql_number(spec$spike_min_dev),
     as.integer(12 * spec$window_years)
@@ -342,6 +394,9 @@ assess_well_dtw <- function(meta, gwl_stats, spec) {
       dtw_mean_seasonal = elev_gs - gwl_mean_seasonal,
       dtw_shallowest = elev_gs - gwl_max,
       dtw_deepest = elev_gs - gwl_min,
+      # typical depth at the annual low (deepest month of a year, averaged)
+      dtw_annual_low = elev_gs - gwl_annual_low,
+      screen_length = screen_bot - screen_top,
       water_table_vs_screen = dplyr::case_when(
         is.na(dtw_mean) | is.na(screen_top) | is.na(screen_bot) ~ NA_character_,
         dtw_mean < pmin(screen_top, screen_bot) ~ "above screen",
@@ -394,12 +449,13 @@ assess_well_dtw <- function(meta, gwl_stats, spec) {
     ) |>
     dplyr::select(
       well_id, usable, in_meta, in_gwl,
-      elev_gs, screen_top, screen_bot,
-      dtw_mean, dtw_mean_seasonal, dtw_shallowest, dtw_deepest, water_table_vs_screen,
+      x, y, elev_gs, screen_top, screen_bot, screen_length,
+      dtw_mean, dtw_mean_seasonal, dtw_shallowest, dtw_deepest, dtw_annual_low,
+      water_table_vs_screen,
       first_valid_month, last_valid_month, recent,
       n_obs_window, n_months_window, coverage_window, max_gap_months,
       n_calendar_months, n_seasons, seasons,
-      gwl_mean, gwl_mean_seasonal, gwl_sd, gwl_min, gwl_max,
+      gwl_mean, gwl_mean_seasonal, gwl_annual_low, gwl_sd, gwl_min, gwl_max,
       n_obs_valid, n_obs_empty, n_obs_out_of_range, n_obs_implausible_dtw, n_months_spike,
       flags
     ) |>
