@@ -8,7 +8,7 @@ and time series from a PostgreSQL database.
 1. Install the R packages:
 
    ```r
-   install.packages(c("targets", "duckdb", "DBI", "dplyr", "tibble", "keyring"))
+   install.packages(c("targets", "RPostgres", "DBI", "dplyr", "tibble", "keyring"))
    ```
 
 2. Copy `.Renviron.example` to `.Renviron` and fill in server, port, database
@@ -24,9 +24,6 @@ and time series from a PostgreSQL database.
 
    `PGPASSWORD` in `.Renviron` or a `~/.pgpass` file work as well.
 
-The first connection downloads DuckDB's `postgres` extension from
-extensions.duckdb.org, so that host needs to be reachable once.
-
 ## Run
 
 ```r
@@ -37,6 +34,6 @@ targets::tar_read(db_columns)          # one row per column
 
 ## How it works
 
-DuckDB attaches the PostgreSQL database read-only (`R/db.R`). Catalogue
-queries run in PostgreSQL itself, while later steps read tables through
-DuckDB's postgres scanner and work on them with dplyr/duckplyr.
+RPostgres connects to the database with a read-only session (`R/db.R`).
+The catalogue queries (`R/catalog.R`) read only PostgreSQL's system
+catalogue, so no table is scanned. Results come back as tibbles for dplyr.

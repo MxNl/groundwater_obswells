@@ -1,13 +1,8 @@
 # Database connection ----------------------------------------------------------
 #
-# DuckDB is the query engine: its postgres extension attaches the PostgreSQL
-# database read-only, so queries can be pushed down to PostgreSQL and large
-# tables read in parallel with the binary COPY protocol. Downstream steps can
-# then work with dplyr/duckplyr verbs on DuckDB instead of R data frames.
-#
-# Connection details come from the libpq environment variables
-# (PGHOST, PGPORT, PGDATABASE, PGUSER) or a PGSERVICE entry, normally set in
-# the git-ignored .Renviron. See .Renviron.example.
+# Connects to PostgreSQL with RPostgres. Connection details come from the libpq
+# environment variables (PGHOST, PGPORT, PGDATABASE, PGUSER) or a PGSERVICE
+# entry, normally set in the git-ignored .Renviron. See .Renviron.example.
 #
 # The password is looked up in this order:
 #   1. PGPASSWORD, if set
@@ -26,35 +21,18 @@ set_pg_password <- function(user = Sys.getenv("PGUSER")) {
   keyring::key_set(keyring_service, username = user)
 }
 
-# Puts the keyring password into PGPASSWORD for this R process, unless a
-# password is set already. libpq reads it whenever DuckDB opens a connection
-# (also the extra ones for parallel scans), so it stays set until
-# pg_disconnect(). Returns the previous PGPASSWORD value, or NA if unset.
-use_keyring_password <- function() {
-  old <- Sys.getenv("PGPASSWORD", unset = NA)
+# The keyring password for PGUSER, or NULL if PGPASSWORD is set, keyring is
+# not installed or no password is stored.
+keyring_password <- function() {
   user <- Sys.getenv("PGUSER")
-  if (!is.na(old) && nzchar(old)) {
-    return(old)
+  if (nzchar(Sys.getenv("PGPASSWORD")) || !nzchar(user) ||
+      !requireNamespace("keyring", quietly = TRUE)) {
+    return(NULL)
   }
-  if (!nzchar(user) || !requireNamespace("keyring", quietly = TRUE)) {
-    return(old)
-  }
-  password <- tryCatch(
+  tryCatch(
     keyring::key_get(keyring_service, username = user),
     error = function(e) NULL
   )
-  if (!is.null(password)) {
-    Sys.setenv(PGPASSWORD = password)
-  }
-  old
-}
-
-restore_pgpassword <- function(old) {
-  if (is.na(old)) {
-    Sys.unsetenv("PGPASSWORD")
-  } else {
-    Sys.setenv(PGPASSWORD = old)
-  }
 }
 
 check_pg_env <- function() {
@@ -74,45 +52,33 @@ check_pg_env <- function() {
   invisible(TRUE)
 }
 
-# Opens an in-memory DuckDB connection with the PostgreSQL database attached
-# read-only as `pg`. Close it with pg_disconnect().
-pg_connect <- function(alias = "pg") {
+# Opens a connection to the PostgreSQL database. Close it with
+# pg_disconnect(). Everything not given here (host, port, database, user,
+# SSL mode) libpq takes from the environment.
+pg_connect <- function() {
   check_pg_env()
-  old_password <- use_keyring_password()
-  con <- DBI::dbConnect(duckdb::duckdb())
-  attr(con, "old_pgpassword") <- old_password
-  ok <- FALSE
-  on.exit(if (!ok) pg_disconnect(con), add = TRUE)
-  DBI::dbExecute(con, "INSTALL postgres")
-  DBI::dbExecute(con, "LOAD postgres")
-  # An empty connection string makes libpq take everything from the
-  # environment, so no credentials end up in SQL or error messages.
-  DBI::dbExecute(
-    con,
-    sprintf("ATTACH '' AS %s (TYPE postgres, READ_ONLY)", alias)
+  args <- list(
+    RPostgres::Postgres(),
+    # Return 64-bit integers as doubles, which dplyr handles without bit64.
+    bigint = "numeric"
   )
-  ok <- TRUE
+  password <- keyring_password()
+  if (!is.null(password)) {
+    args$password <- password
+  }
+  con <- do.call(DBI::dbConnect, args)
+  # The analysis only reads: make the session read-only as a safeguard.
+  DBI::dbExecute(con, "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
   con
 }
 
 pg_disconnect <- function(con) {
-  old_password <- attr(con, "old_pgpassword")
-  DBI::dbDisconnect(con, shutdown = TRUE)
-  if (!is.null(old_password)) {
-    restore_pgpassword(old_password)
-  }
+  DBI::dbDisconnect(con)
 }
 
-# Runs `sql` as-is in PostgreSQL (postgres_query()) and returns the result
-# as a tibble. Use this for catalogue queries and anything PostgreSQL
-# should compute itself.
-pg_query <- function(con, sql, alias = "pg") {
-  sql <- gsub("'", "''", sql, fixed = TRUE)
-  res <- DBI::dbGetQuery(
-    con,
-    sprintf("SELECT * FROM postgres_query('%s', '%s')", alias, sql)
-  )
-  tibble::as_tibble(res)
+# Runs `sql` in PostgreSQL and returns the result as a tibble.
+pg_query <- function(con, sql) {
+  tibble::as_tibble(DBI::dbGetQuery(con, sql))
 }
 
 # Schemas to include, from MW_SCHEMAS (comma-separated); NULL means all.

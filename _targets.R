@@ -3,7 +3,7 @@
 library(targets)
 
 tar_option_set(
-  packages = c("DBI", "duckdb", "dplyr", "tibble")
+  packages = c("DBI", "RPostgres", "dplyr", "tibble")
 )
 
 tar_source("R")
