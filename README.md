@@ -149,7 +149,9 @@ reported when the pipeline runs.
 Borders: the Natural Earth state borders are downloaded once into
 `cache/naturalearth/`. Where the download is blocked (proxy), put
 `ne_10m_admin_1_states_provinces.zip` from naturalearthdata.com there by
-hand; until then the maps show the country outline from rnaturalearthdata.
+hand, or copy the unpacked shapefile (`ne_10m_admin_1_states_provinces.*`)
+from another project's cache; until then the maps show the country outline
+from rnaturalearthdata.
 
 ## How it works
 

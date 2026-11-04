@@ -117,22 +117,27 @@ save_figure <- function(plot, path, width, height) {
 # web, which fails behind many company proxies. If the download fails, the
 # country outline of the rnaturalearthdata package (1:50 m, no state
 # borders, no download) is used. To provide the file by hand, put
-# ne_10m_admin_1_states_provinces.zip into cache/naturalearth/.
+# ne_10m_admin_1_states_provinces.zip, or the unpacked shapefile as
+# rnaturalearth stores it (e.g. copied from another project's cache), into
+# cache/naturalearth/.
 read_germany <- function(crs = 25832) {
   destdir <- "cache/naturalearth"
   layer <- "ne_10m_admin_1_states_provinces"
+  shp <- file.path(destdir, paste0(layer, ".shp"))
   zip <- file.path(destdir, paste0(layer, ".zip"))
   url <- paste0("https://naciscdn.org/naturalearth/10m/cultural/", layer, ".zip")
 
-  if (!file.exists(zip)) {
+  if (!file.exists(shp) && !file.exists(zip)) {
     dir.create(destdir, showWarnings = FALSE, recursive = TRUE)
     download_zip(url, zip)
   }
-  if (file.exists(zip)) {
-    states <- sf::st_read(
-      paste0("/vsizip/", normalizePath(zip, winslash = "/"), "/", layer, ".shp"),
-      quiet = TRUE
-    )
+  source <- if (file.exists(shp)) {
+    shp
+  } else if (file.exists(zip)) {
+    paste0("/vsizip/", normalizePath(zip, winslash = "/"), "/", layer, ".shp")
+  }
+  if (!is.null(source)) {
+    states <- sf::st_read(source, quiet = TRUE)
     states <- states[states$adm0_a3 == "DEU", ]
   } else {
     if (!requireNamespace("rnaturalearthdata", quietly = TRUE)) {
