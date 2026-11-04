@@ -1,0 +1,14 @@
+# Copy this file to .Renviron (git-ignored) and fill in the values.
+# R reads .Renviron at start-up, so restart R after editing it.
+# These are the standard libpq variables: DuckDB's postgres extension
+# reads them directly, so the connection details never appear in code.
+# Leave PGPASSWORD empty if you keep the password in ~/.pgpass instead.
+PGHOST=
+PGPORT=5432
+PGDATABASE=
+PGUSER=
+PGPASSWORD=
+# PGSSLMODE=require
+
+# Optional: limit the catalogue to these schemas (comma-separated).
+# MW_SCHEMAS=public
