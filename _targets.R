@@ -38,7 +38,7 @@ list(
 
       # checks of single measurements (on the server)
       gwl_valid_range = c(-100, 3000), # m a.s.l.; outside: error codes like -999
-      dtw_valid_range = c(-5, 300),    # m below ground; outside: implausible
+      dtw_valid_range = c(-2, 150),    # m below ground; outside: implausible
 
       # mean over the last window_years * 12 months up to the last valid month
       window_years = 5,
