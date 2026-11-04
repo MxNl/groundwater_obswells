@@ -46,17 +46,20 @@ list(
       gwl_valid_range = c(-100, 3000), # m a.s.l.; outside: error codes like -999
       dtw_valid_range = c(-2, 150),    # m below ground; outside: implausible
 
-      # mean over the last window_years * 12 months up to the last valid month
-      window_years = 5,
-      # monthly means further than max(spike_mad * MAD, spike_min_dev) m from
-      # the well's median in the window are removed as spikes
+      # recent window: the last recent_years up to the reference month
+      # (reference_date, NULL: today); monthly means further than
+      # max(spike_mad * MAD, spike_min_dev) m from the well's median there are
+      # removed as spikes
+      recent_years = 10,
+      reference_date = NULL,
       spike_mad = 5,
       spike_min_dev = 1,
-
-      # criteria for "usable"
-      recent_years = 10,         # last valid month within the last 10 years
-      min_coverage = 0.5,        # at least 50 % of the window's months with data
-      require_all_seasons = TRUE # data in all four seasons in the window
+      # usable: each season (DJF, MAM, JJA, SON) has data in at least this
+      # many years of the recent window
+      min_years_per_season = 5,
+      # mean, annual low etc. over the window_years most recent years with data
+      # in the recent window (not necessarily consecutive)
+      window_years = 5
     )
   ),
   tar_target(well_spec, resolve_well_spec(well_config, db_columns, db_tables)),
@@ -78,7 +81,7 @@ list(
   #   "spans": screen across the mean water table, its bottom deeper than the
   #            annual low (top_below_max not used)
   tar_target(
-    scenarios,
+    scenarios_fixed,
     tibble::tribble(
       ~id, ~name, ~dtw_mean_min, ~dtw_mean_max, ~dtw_max, ~screen_rule, ~top_below_max, ~screen_length_max, ~colour, ~purpose,
       "farm_strict", "FARM strict", 1, 5, 10, "below", 2, 2, "#E4572E",
@@ -88,11 +91,23 @@ list(
       "very_shallow", "Very shallow", 0.5, 3, 5, "below", 1, 2, "#1B998B",
         "Groundwater within 3 m of the surface, which seepage water reaches fastest, and a short screen right below the water table.",
       "screen_at_water_table", "Screen at the water table", 1, 5, 10, "spans", NA, 3, "#2E86AB",
-        "Screens across the water table sample the uppermost, youngest groundwater, where substances from the surface arrive first.",
-      "extended_depth", "Extended depth", 1, 8, 12, "below", 3, 4, "#6A4C93",
-        "As FARM tolerant, but also groundwater 5 to 8 m deep: longer delays, but more wells."
+        "Screens across the water table sample the uppermost, youngest groundwater, where substances from the surface arrive first."
     )
   ),
+  # Scenario fitted to the data: the shallowest limit of the mean depth on
+  # depth_grid that keeps at least keep_share of the wells the deepest limit
+  # would keep; maximum depth = limit + dtw_max_extra; the other criteria fixed
+  tar_target(
+    optimised_settings,
+    list(
+      id = "shallow_most_wells", name = "Shallow, most wells", colour = "#6A4C93",
+      dtw_mean_min = 0, dtw_max_extra = 5,
+      screen_rule = "below", top_below_max = 3, screen_length_max = 4,
+      depth_grid = seq(1, 15, by = 0.5), keep_share = 0.8
+    )
+  ),
+  tar_target(scenario_optimisation, optimise_shallow_scenario(well_dtw, optimised_settings)),
+  tar_target(scenarios, dplyr::bind_rows(scenarios_fixed, scenario_optimisation$scenario)),
   tar_target(
     plot_config,
     list(
@@ -121,6 +136,16 @@ list(
   tar_target(
     sankey_plots,
     plot_sankeys(well_dtw, scenarios, scenario_steps, well_spec, plot_config, plot_font),
+    format = "file"
+  ),
+  tar_target(
+    optimisation_plot,
+    plot_optimisation(scenario_optimisation, plot_config, plot_font),
+    format = "file"
+  ),
+  tar_target(
+    screen_map_plot,
+    plot_missing_screens(well_points, germany, plot_config, plot_font),
     format = "file"
   ),
   tar_target(

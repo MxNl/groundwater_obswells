@@ -51,11 +51,10 @@ scenario_step_labels <- function(s, sep = "\n") {
 well_stages <- function(wells, spec) {
   m <- dplyr::filter(wells, in_meta)
   has_gs <- !is.na(m$elev_gs)
-  has_gwl <- has_gs & !is.na(m$gwl_mean)
+  has_gwl <- has_gs & dplyr::coalesce(m$n_obs_valid, 0) > 0
   has_screen <- has_gwl & !is.na(m$screen_top) & !is.na(m$screen_bot)
   recent <- has_screen & m$recent %in% TRUE
-  covered <- recent & dplyr::coalesce(m$coverage_window, 0) >= spec$min_coverage
-  usable <- covered & m$usable
+  usable <- recent & m$usable
 
   tibble::tibble(
     label = c(
@@ -64,22 +63,20 @@ well_stages <- function(wells, spec) {
       "with valid groundwater levels",
       "with screen depths",
       paste("with data in the last", spec$recent_years, "years"),
-      paste0("with \u2265 ", 100 * spec$min_coverage, " % of the months covered"),
-      if (isTRUE(spec$require_all_seasons)) "with data in all four seasons" else "usable"
+      paste0("each season in \u2265 ", spec$min_years_per_season, " of these years")
     ),
     short = c(
       "Metadata", "Ground\nelevation", "Valid\nlevels", "Screen\ndepths",
-      "Recent\ndata", "Months\ncovered", "Usable\nwells"
+      "Recent\ndata", "Usable\nwells"
     ),
-    n = c(nrow(m), sum(has_gs), sum(has_gwl), sum(has_screen), sum(recent), sum(covered), sum(usable)),
+    n = c(nrow(m), sum(has_gs), sum(has_gwl), sum(has_screen), sum(recent), sum(usable)),
     reason = c(
       NA,
       "no ground surface elevation",
       "no valid groundwater levels",
       "no screen depths",
       paste("no data in the last", spec$recent_years, "years"),
-      "too many gaps",
-      "a season missing"
+      paste("a season in <", spec$min_years_per_season, "years")
     )
   ) |>
     dplyr::mutate(dropped = dplyr::lag(n) - n)
@@ -262,8 +259,8 @@ plot_flowchart <- function(wells, scenarios, steps, spec, plot_config,
   n_chain <- nrow(chain)
   chain$y <- -(seq_len(n_chain) - 1) * 0.95
   chain$detail <- c(
-    "", "", "error codes, implausible depths and spikes removed", "", "", "",
-    "= usable wells"
+    "", "", "error codes, implausible depths and spikes removed",
+    rep("", n_chain - 4), "= usable wells"
   )
 
   box_w <- 5
@@ -687,4 +684,154 @@ plot_sankey_combined <- function(wells, scenarios, scenario_wells, steps, spec, 
     p, file.path(plot_config$dir, "sankey_combined.png"),
     width = figure_width, height = 6.5
   )
+}
+
+# Optimised scenario ------------------------------------------------------------------
+
+# Wells of the optimised scenario against the limit of the mean depth, with
+# the chosen limit and the share of wells it keeps.
+plot_optimisation <- function(optimisation, plot_config,
+                              font = setup_plot_font(plot_config$font)) {
+  setup_plot_font(plot_config$font)
+  curve <- optimisation$curve
+  s <- optimisation$scenario
+  chosen <- dplyr::filter(curve, chosen)
+  target <- optimisation$keep_share * optimisation$n_ref
+
+  p <- ggplot2::ggplot(curve, ggplot2::aes(dtw_mean_max, n)) +
+    ggplot2::geom_hline(yintercept = target, colour = "grey60", linewidth = 0.3, linetype = "22") +
+    ggplot2::annotate(
+      "text", x = max(curve$dtw_mean_max), y = target, vjust = -0.6, hjust = 1,
+      family = font, size = 3.3, colour = "grey40",
+      label = paste0(100 * optimisation$keep_share, " % of the wells at ", max(curve$dtw_mean_max), " m")
+    ) +
+    ggplot2::geom_line(colour = "grey50", linewidth = 0.6) +
+    ggplot2::geom_point(colour = "grey50", size = 1.4) +
+    ggplot2::geom_segment(
+      ggplot2::aes(x = dtw_mean_max, xend = dtw_mean_max, y = 0, yend = n),
+      data = chosen, colour = s$colour, linewidth = 0.6
+    ) +
+    ggplot2::geom_point(data = chosen, colour = s$colour, size = 3) +
+    ggplot2::geom_text(
+      ggplot2::aes(label = paste0(dtw_mean_max, " m: ", label_n(n), " wells")),
+      data = chosen, hjust = -0.12, vjust = 1.4, family = font, size = 3.8,
+      colour = s$colour, fontface = "bold"
+    ) +
+    ggplot2::scale_x_continuous(
+      breaks = seq(0, max(curve$dtw_mean_max), 1),
+      labels = function(x) paste(x, "m")
+    ) +
+    ggplot2::scale_y_continuous(labels = label_n, limits = c(0, NA), expand = ggplot2::expansion(c(0, 0.08))) +
+    ggplot2::labs(
+      title = paste0(s$name, ": fitting the depth limit"),
+      subtitle = paste0(
+        "Wells that meet the scenario for each limit of the mean depth to ",
+        "groundwater (maximum depth = limit + ", s$dtw_max - s$dtw_mean_max,
+        " m; screen top 0\u2013", s$top_below_max, " m below the water table, ",
+        "length \u2264 ", s$screen_length_max, " m). The ",
+        colour_word("chosen limit", s$colour), " is the shallowest that keeps ",
+        100 * optimisation$keep_share, " % of the wells."
+      ),
+      x = "Limit of the mean depth to groundwater", y = "Wells",
+      caption = plot_config$caption
+    ) +
+    theme_charts(font)
+
+  save_figure(p, file.path(plot_config$dir, "scenario_optimisation.png"), width = figure_width, height = 6)
+}
+
+# Missing screen depths -----------------------------------------------------------------
+
+# Where screen depths are missing: map of the wells that have the ground
+# elevation and valid groundwater levels (the step before the screen
+# depths), coloured by which screen depth is missing, and the share per
+# state (prefix of the well ID, e.g. BB_).
+plot_missing_screens <- function(points, germany, plot_config,
+                                 font = setup_plot_font(plot_config$font)) {
+  setup_plot_font(plot_config$font)
+  categories <- c(
+    "both missing" = "#E4572E",
+    "screen top missing" = "#F0A202",
+    "screen bottom missing" = "#2E86AB",
+    "complete" = "grey72"
+  )
+  base <- points |>
+    dplyr::filter(in_meta, !is.na(elev_gs), dplyr::coalesce(n_obs_valid, 0) > 0) |>
+    dplyr::mutate(
+      status = dplyr::case_when(
+        is.na(screen_top) & is.na(screen_bot) ~ "both missing",
+        is.na(screen_top) ~ "screen top missing",
+        is.na(screen_bot) ~ "screen bottom missing",
+        .default = "complete"
+      ),
+      status = factor(status, levels = names(categories)),
+      state = ifelse(grepl("_", well_id), sub("_.*$", "", well_id), "other")
+    )
+  n_missing <- sum(base$status != "complete")
+
+  map <- ggplot2::ggplot() +
+    ggplot2::geom_sf(data = germany, fill = "grey95", colour = "grey70", linewidth = 0.2) +
+    ggplot2::geom_point(
+      ggplot2::aes(X, Y),
+      data = dplyr::filter(base, status == "complete"),
+      colour = categories[["complete"]], size = 0.3, stroke = 0
+    ) +
+    ggplot2::geom_point(
+      ggplot2::aes(X, Y, colour = status),
+      data = dplyr::filter(base, status != "complete"),
+      size = 0.6, stroke = 0
+    ) +
+    ggplot2::scale_colour_manual(values = categories, guide = "none") +
+    ggplot2::coord_sf(datum = NA, crs = sf::st_crs(germany)) +
+    theme_maps(font) +
+    ggplot2::theme(plot.margin = ggplot2::margin(0, 5, 0, 0))
+
+  by_state <- base |>
+    dplyr::count(state, status) |>
+    dplyr::mutate(share = n / sum(n), n_state = sum(n), .by = state) |>
+    dplyr::mutate(
+      missing_share = sum(share[status != "complete"]),
+      .by = state
+    ) |>
+    dplyr::mutate(state = stats::reorder(state, missing_share))
+  totals <- dplyr::distinct(by_state, state, n_state, missing_share)
+
+  bars <- ggplot2::ggplot(by_state, ggplot2::aes(share, state, fill = status)) +
+    ggplot2::geom_col(width = 0.75, position = ggplot2::position_stack(reverse = TRUE)) +
+    ggplot2::geom_text(
+      ggplot2::aes(x = 1.02, y = state, label = paste0(round(100 * missing_share), " % of ", label_n(n_state))),
+      data = totals, inherit.aes = FALSE, hjust = 0, family = font, size = 3.1, colour = "grey30"
+    ) +
+    ggplot2::scale_fill_manual(values = categories, name = NULL) +
+    ggplot2::scale_x_continuous(
+      labels = scales::label_percent(), breaks = seq(0, 1, 0.25),
+      expand = ggplot2::expansion(c(0, 0)), limits = c(0, 1.32)
+    ) +
+    ggplot2::coord_cartesian(clip = "off") +
+    ggplot2::labs(x = "Share of the wells", y = "State (prefix of the well ID)") +
+    theme_charts(font, base_size = 12) +
+    ggplot2::theme(
+      panel.grid.major.y = ggplot2::element_blank(),
+      legend.position = "bottom",
+      legend.justification = "left",
+      plot.margin = ggplot2::margin(10, 10, 0, 10)
+    ) +
+    ggplot2::guides(fill = ggplot2::guide_legend(nrow = 2))
+
+  figure <- patchwork::wrap_elements(full = map) + bars +
+    patchwork::plot_layout(widths = c(1, 1)) +
+    patchwork::plot_annotation(
+      title = paste0("Missing screen depths: ", label_n(n_missing), " wells"),
+      subtitle = paste0(
+        "Wells with ground surface elevation and valid groundwater levels, ",
+        "the step before the screen depths: ", label_n(n_missing), " of ",
+        label_n(nrow(base)), " (", round(100 * n_missing / max(nrow(base), 1)),
+        " %) lack the screen top, the bottom or both. Right: share per state ",
+        "and the number of wells there."
+      ),
+      caption = plot_config$caption,
+      theme = theme_maps(font) +
+        ggplot2::theme(plot.subtitle = element_subtitle(margin = ggplot2::margin(t = 4, b = 8)))
+    )
+  save_figure(figure, file.path(plot_config$dir, "missing_screen_depths.png"), width = figure_width, height = 7.5)
 }

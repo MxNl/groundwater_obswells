@@ -164,3 +164,57 @@ assign_scenario_groups <- function(scenario_wells, scenarios) {
     dplyr::left_join(dplyr::select(first, well_id, scenario_id), by = "well_id") |>
     dplyr::mutate(scenario_id = dplyr::coalesce(scenario_id, "none"))
 }
+
+# Optimised scenario ---------------------------------------------------------------
+
+# A scenario fitted to the data: as shallow as possible without losing too
+# many wells. The screen criteria and the other settings come from
+# `settings`; only the limit of the mean depth to groundwater is fitted: the
+# shallowest limit on depth_grid that keeps at least keep_share of the wells
+# the deepest limit on the grid would keep. The maximum depth is that limit
+# plus dtw_max_extra. Returns the scenario (one row as in the scenarios
+# table) and the curve of wells against the limit.
+optimise_shallow_scenario <- function(wells, settings) {
+  grid <- sort(settings$depth_grid)
+  candidates <- tibble::tibble(
+    id = paste0("limit_", seq_along(grid)),
+    name = settings$name,
+    dtw_mean_min = settings$dtw_mean_min,
+    dtw_mean_max = grid,
+    dtw_max = grid + settings$dtw_max_extra,
+    screen_rule = settings$screen_rule,
+    top_below_max = settings$top_below_max,
+    screen_length_max = settings$screen_length_max
+  )
+  n_selected <- evaluate_scenarios(wells, candidates) |>
+    dplyr::summarise(n = sum(selected), .by = scenario_id)
+  curve <- candidates |>
+    dplyr::left_join(n_selected, by = c(id = "scenario_id")) |>
+    dplyr::mutate(n = dplyr::coalesce(n, 0L)) |>
+    dplyr::select(dtw_mean_max, dtw_max, n)
+
+  n_ref <- max(curve$n[curve$dtw_mean_max == max(grid)], 1)
+  target <- settings$keep_share * n_ref
+  chosen <- curve$dtw_mean_max[which(curve$n >= target)[1]]
+  curve$chosen <- curve$dtw_mean_max == chosen
+  n_chosen <- curve$n[curve$chosen]
+
+  m <- function(x) format(x, decimal.mark = ".", trim = TRUE)
+  scenario <- tibble::tibble(
+    id = settings$id,
+    name = settings$name,
+    dtw_mean_min = settings$dtw_mean_min,
+    dtw_mean_max = chosen,
+    dtw_max = chosen + settings$dtw_max_extra,
+    screen_rule = settings$screen_rule,
+    top_below_max = settings$top_below_max,
+    screen_length_max = settings$screen_length_max,
+    colour = settings$colour,
+    purpose = paste0(
+      "Fitted to the data: the shallowest limit of the mean depth (", m(chosen),
+      " m) that still keeps ", round(100 * n_chosen / n_ref), " % of the wells a limit of ",
+      m(max(grid)), " m would give; screen criteria as FARM tolerant."
+    )
+  )
+  list(scenario = scenario, curve = curve, n_ref = n_ref, keep_share = settings$keep_share)
+}

@@ -7,15 +7,16 @@
 #   1. On the server, each measurement is checked: empty, outside the valid
 #      level range (error codes such as -999) or an implausible depth below
 #      ground. Only valid measurements are averaged per month.
-#   2. The window is the last `window_years` * 12 calendar months up to the
-#      well's last month with valid data. Locally, in DuckDB, monthly means
-#      far from the well's median in the window (spikes) are removed.
+#   2. Locally, in DuckDB: the recent window is the last `recent_years` up
+#      to the current month (reference_date); monthly means far from the
+#      well's median there (spikes) are removed. The mean window is the
+#      `window_years` most recent calendar years with data in it.
 #   3. The mean of the monthly means is the mean level, so dense logger
 #      periods do not outweigh monthly manual readings. The seasonal mean
 #      averages each calendar month over the years first, so every month
 #      counts the same even if some are missing more often.
-#   4. dtw = elev_gs - mean level. Coverage, the longest gap and the
-#      seasons covered show how reliable that mean is.
+#   4. dtw = elev_gs - mean level. A well is usable if each season has data
+#      in at least `min_years_per_season` years of the recent window.
 
 sql_ident <- function(x) {
   paste0("[", gsub("]", "]]", x, fixed = TRUE), "]")
@@ -98,6 +99,11 @@ resolve_well_spec <- function(config, columns, tables) {
   spec$gwl_n_rows <- n_rows(gwl_schema, config$gwl_table)
   spec$x <- x_col
   spec$y <- y_col
+  # month the recent window ends with (as year * 12 + month - 1); with
+  # reference_date NULL the current month, so the window moves on monthly
+  reference <- as.Date(config$reference_date %||% Sys.Date())
+  spec$reference_month <- as.integer(format(reference, "%Y")) * 12L +
+    as.integer(format(reference, "%m")) - 1L
   spec
 }
 
@@ -208,16 +214,15 @@ SELECT well_id,
        first_month,
        last_month
 FROM per_well
-WHERE (last_month IS NOT NULL AND n_valid > 0
-       AND month_index > last_month - 12 * %14$d)
-   OR (last_month IS NULL AND rn = 1)",
+WHERE (n_valid > 0 AND month_index > %14$d - 12 * %15$d)
+   OR rn = 1",
     sql_ident(spec$meta_id), sql_ident(spec$elev_gs),
     sql_ident(spec$meta_schema), sql_ident(spec$meta_table),
     sql_ident(spec$gwl_id), sql_ident(spec$gwl_date), sql_ident(spec$gwl_level),
     sql_ident(spec$gwl_schema), sql_ident(spec$gwl_table),
     sql_number(spec$gwl_valid_range[1]), sql_number(spec$gwl_valid_range[2]),
     sql_number(spec$dtw_valid_range[1]), sql_number(spec$dtw_valid_range[2]),
-    as.integer(spec$window_years)
+    as.integer(spec$reference_month), as.integer(spec$recent_years)
   )
 }
 
@@ -234,23 +239,29 @@ month_date <- function(month_index) {
   out
 }
 
-# Per well statistics of the monthly means in the window, computed in an
-# in-memory DuckDB (fast for millions of well-months):
-#   - spikes: monthly means further than max(spike_mad * MAD, spike_min_dev)
-#     from the well's median in the window (wells with >= 3 months), removed
-#   - coverage, longest gap (including the start of the window), calendar
-#     months and seasons covered
-#   - mean, sd, min and max of the monthly means, and the seasonal mean: mean
-#     of the 12 calendar-month means, only if all 12 calendar months have data
-#   - the annual low: lowest monthly mean of each year, averaged over the
-#     years with at least 6 months of data
+# Per well statistics of the monthly means, computed in an in-memory DuckDB
+# (fast for millions of well-months):
+#   - recent window: the last recent_years * 12 months up to the reference
+#     month; spikes there (monthly means further than max(spike_mad * MAD,
+#     spike_min_dev) from the well's median, wells with >= 3 months) removed
+#   - seasons: in how many years of the recent window each season (DJF, MAM,
+#     JJA, SON) has data; min_years_per_season is the smallest of the four
+#     (0 if a season never has data)
+#   - mean window: the window_years most recent calendar years with data in
+#     the recent window (not necessarily consecutive): mean, sd, min and max
+#     of their monthly means, the seasonal mean (mean of the 12 calendar-month
+#     means, if all 12 have data), and the annual low (lowest monthly mean of
+#     each year, averaged over the years with >= 6 months, else all years)
+#   - coverage_recent: share of the recent window's months with data;
+#     max_gap_months: longest run of months without data in it
 gwl_window_stats_sql <- function(spec) {
   sprintf(
     "WITH m AS (
-  SELECT well_id, CAST(month_index AS INTEGER) AS month_index,
-         n_obs, gwl, CAST(last_month AS INTEGER) AS last_month
+  SELECT well_id, CAST(month_index AS INTEGER) AS month_index, n_obs, gwl
   FROM monthly
   WHERE month_index IS NOT NULL AND gwl IS NOT NULL
+    AND month_index > %3$d - %4$d
+    AND month_index <= %3$d
 ),
 centre AS (
   SELECT well_id, median(gwl) AS med, count(*) AS n
@@ -267,8 +278,9 @@ marked AS (
   JOIN centre AS c USING (well_id)
   JOIN spread AS s USING (well_id)
 ),
-kept AS (
+valid AS (
   SELECT *,
+         month_index // 12 AS obs_year,
          month_index %% 12 + 1 AS cal_month,
          CASE
            WHEN month_index %% 12 + 1 IN (12, 1, 2) THEN 'DJF'
@@ -278,16 +290,50 @@ kept AS (
          END AS season,
          month_index - coalesce(
            lag(month_index) OVER (PARTITION BY well_id ORDER BY month_index),
-           last_month - %3$d
+           %3$d - %4$d
          ) - 1 AS gap
   FROM marked
   WHERE NOT spike
 ),
--- the lowest monthly level of each year, averaged over the years with at
--- least 6 months of data (all years if none has): the typical annual low
+recent AS (
+  SELECT well_id,
+         CAST(count(*) AS DOUBLE) AS n_months_recent,
+         CAST(count(*) AS DOUBLE) / %4$d AS coverage_recent,
+         -- months without data after the last month with data count as gap too
+         CAST(greatest(max(gap), %3$d - max(month_index)) AS DOUBLE) AS max_gap_months,
+         CAST(count(DISTINCT obs_year) AS DOUBLE) AS n_years_recent
+  FROM valid GROUP BY well_id
+),
+season_years AS (
+  SELECT well_id, season, count(DISTINCT obs_year) AS n_years
+  FROM valid GROUP BY well_id, season
+),
+season_cover AS (
+  SELECT well_id,
+         CAST(CASE WHEN count(*) = 4 THEN min(n_years) ELSE 0 END AS DOUBLE) AS min_years_per_season,
+         CAST(count(*) AS DOUBLE) AS n_seasons,
+         concat_ws(',',
+           CASE WHEN bool_or(season = 'DJF') THEN 'DJF' END,
+           CASE WHEN bool_or(season = 'MAM') THEN 'MAM' END,
+           CASE WHEN bool_or(season = 'JJA') THEN 'JJA' END,
+           CASE WHEN bool_or(season = 'SON') THEN 'SON' END
+         ) AS seasons
+  FROM season_years GROUP BY well_id
+),
+ranked_years AS (
+  SELECT well_id, obs_year,
+         row_number() OVER (PARTITION BY well_id ORDER BY obs_year DESC) AS year_rank
+  FROM (SELECT DISTINCT well_id, obs_year FROM valid)
+),
+kept AS (
+  SELECT v.*
+  FROM valid AS v
+  JOIN ranked_years AS r USING (well_id, obs_year)
+  WHERE r.year_rank <= %5$d
+),
 annual AS (
-  SELECT well_id, month_index // 12 AS obs_year, min(gwl) AS gwl_low, count(*) AS n
-  FROM kept GROUP BY well_id, month_index // 12
+  SELECT well_id, obs_year, min(gwl) AS gwl_low, count(*) AS n
+  FROM kept GROUP BY well_id, obs_year
 ),
 annual_low AS (
   SELECT well_id,
@@ -304,15 +350,10 @@ window_stats AS (
   SELECT well_id,
          CAST(sum(n_obs) AS DOUBLE) AS n_obs_window,
          CAST(count(*) AS DOUBLE) AS n_months_window,
-         CAST(max(gap) AS DOUBLE) AS max_gap_months,
+         CAST(count(DISTINCT obs_year) AS DOUBLE) AS n_years_window,
+         CAST(min(obs_year) AS DOUBLE) AS first_year_window,
+         CAST(max(obs_year) AS DOUBLE) AS last_year_window,
          CAST(count(DISTINCT cal_month) AS DOUBLE) AS n_calendar_months,
-         CAST(count(DISTINCT season) AS DOUBLE) AS n_seasons,
-         concat_ws(',',
-           CASE WHEN bool_or(season = 'DJF') THEN 'DJF' END,
-           CASE WHEN bool_or(season = 'MAM') THEN 'MAM' END,
-           CASE WHEN bool_or(season = 'JJA') THEN 'JJA' END,
-           CASE WHEN bool_or(season = 'SON') THEN 'SON' END
-         ) AS seasons,
          avg(gwl) AS gwl_mean,
          stddev_samp(gwl) AS gwl_sd,
          min(gwl) AS gwl_min,
@@ -330,18 +371,22 @@ counts AS (
 )
 SELECT counts.*,
        spikes.n_months_spike,
+       recent.* EXCLUDE (well_id),
+       season_cover.* EXCLUDE (well_id),
        window_stats.* EXCLUDE (well_id),
-       window_stats.n_months_window / %3$d AS coverage_window,
        seasonal.gwl_mean_seasonal,
        annual_low.gwl_annual_low
 FROM counts
 LEFT JOIN spikes USING (well_id)
+LEFT JOIN recent USING (well_id)
+LEFT JOIN season_cover USING (well_id)
 LEFT JOIN window_stats USING (well_id)
 LEFT JOIN seasonal USING (well_id)
 LEFT JOIN annual_low USING (well_id)
 ORDER BY well_id",
     sql_number(spec$spike_mad), sql_number(spec$spike_min_dev),
-    as.integer(12 * spec$window_years)
+    as.integer(spec$reference_month), as.integer(12 * spec$recent_years),
+    as.integer(spec$window_years)
   )
 }
 
@@ -378,9 +423,6 @@ assess_well_dtw <- function(meta, gwl_stats, spec) {
     dplyr::mutate(n_meta_records = dplyr::n(), .by = well_id) |>
     dplyr::distinct(well_id, .keep_all = TRUE)
 
-  recent_from <- as.numeric(format(Sys.Date(), "%Y")) - spec$recent_years
-  seasons_needed <- if (isTRUE(spec$require_all_seasons)) 4 else 0
-
   dplyr::full_join(
     dplyr::mutate(meta, in_meta = TRUE),
     dplyr::mutate(gwl_stats, in_gwl = TRUE),
@@ -403,18 +445,17 @@ assess_well_dtw <- function(meta, gwl_stats, spec) {
         dtw_mean <= pmax(screen_top, screen_bot) ~ "within screen",
         .default = "below screen"
       ),
-      recent = as.numeric(format(last_valid_month, "%Y")) >= recent_from,
+      # valid data in the recent window, and each season in enough of its years
+      recent = dplyr::coalesce(n_months_recent, 0) > 0,
+      seasons_ok = dplyr::coalesce(min_years_per_season, 0) >= spec$min_years_per_season,
       usable = !is.na(dtw_mean) &
         !is.na(screen_top) & !is.na(screen_bot) &
-        recent %in% TRUE &
-        coverage_window >= spec$min_coverage &
-        n_seasons >= seasons_needed,
-      usable = usable %in% TRUE,
+        recent & seasons_ok,
       flags = combine_flags(stats::setNames(
         list(
           !in_meta,
           in_meta & !in_gwl,
-          in_gwl & is.na(gwl_mean),
+          in_gwl & dplyr::coalesce(n_obs_valid, 0) == 0,
           in_meta & is.na(elev_gs),
           in_meta & (is.na(screen_top) | is.na(screen_bot)),
           n_meta_records > 1,
@@ -424,9 +465,8 @@ assess_well_dtw <- function(meta, gwl_stats, spec) {
           n_obs_implausible_dtw > 0,
           n_months_spike > 0,
           dtw_mean < 0,
-          coverage_window < spec$min_coverage,
-          n_seasons < 4,
-          !recent
+          !recent,
+          recent & !seasons_ok
         ),
         c(
           "no metadata",
@@ -441,9 +481,8 @@ assess_well_dtw <- function(meta, gwl_stats, spec) {
           "implausible depths removed",
           "spikes removed",
           "mean level above ground",
-          "low coverage",
-          "season(s) missing",
-          paste("no data in the last", spec$recent_years, "years")
+          paste("no data in the last", spec$recent_years, "years"),
+          paste("a season in fewer than", spec$min_years_per_season, "years")
         )
       ))
     ) |>
@@ -452,9 +491,11 @@ assess_well_dtw <- function(meta, gwl_stats, spec) {
       x, y, elev_gs, screen_top, screen_bot, screen_length,
       dtw_mean, dtw_mean_seasonal, dtw_shallowest, dtw_deepest, dtw_annual_low,
       water_table_vs_screen,
-      first_valid_month, last_valid_month, recent,
-      n_obs_window, n_months_window, coverage_window, max_gap_months,
-      n_calendar_months, n_seasons, seasons,
+      first_valid_month, last_valid_month, recent, seasons_ok,
+      n_months_recent, coverage_recent, max_gap_months, n_years_recent,
+      min_years_per_season, n_seasons, seasons,
+      first_year_window, last_year_window, n_years_window, n_months_window,
+      n_obs_window, n_calendar_months,
       gwl_mean, gwl_mean_seasonal, gwl_annual_low, gwl_sd, gwl_min, gwl_max,
       n_obs_valid, n_obs_empty, n_obs_out_of_range, n_obs_implausible_dtw, n_months_spike,
       flags
@@ -469,28 +510,26 @@ summarise_well_availability <- function(wells, spec) {
   m <- dplyr::filter(wells, in_meta)
   has_gs <- !is.na(m$elev_gs)
   has_screen <- !is.na(m$screen_top) & !is.na(m$screen_bot)
-  has_dtw <- !is.na(m$dtw_mean)
+  has_gwl <- dplyr::coalesce(m$n_obs_valid, 0) > 0
   recent <- m$recent %in% TRUE
-  covered <- dplyr::coalesce(m$coverage_window, 0) >= spec$min_coverage
-  seasons <- dplyr::coalesce(m$n_seasons, 0) >= if (isTRUE(spec$require_all_seasons)) 4 else 0
+  seasons <- m$seasons_ok %in% TRUE
+  has_dtw <- !is.na(m$dtw_mean)
 
   items <- c(
     "wells in metadata" = nrow(m),
     "... with elev_gs" = sum(has_gs),
     "... with screen_top and screen_bot" = sum(has_screen),
     "... with groundwater levels" = sum(m$in_gwl),
-    "... with valid groundwater levels" = sum(!is.na(m$gwl_mean)),
-    "... with mean depth to groundwater (dtw)" = sum(has_dtw),
-    "... + screen depths" = sum(has_dtw & has_screen),
-    "... + RECENT" = sum(has_dtw & has_screen & recent),
-    "... + COVERAGE" = sum(has_dtw & has_screen & recent & covered),
-    "... + SEASONS = usable" = sum(has_dtw & has_screen & recent & covered & seasons),
+    "... with valid groundwater levels" = sum(has_gwl),
+    "... with elev_gs and valid levels" = sum(has_gs & has_gwl),
+    "... + screen depths" = sum(has_gs & has_gwl & has_screen),
+    "... + RECENT" = sum(has_gs & has_screen & recent),
+    "... + SEASONS = usable" = sum(has_dtw & has_screen & recent & seasons),
     "wells with groundwater levels but no metadata" = sum(!wells$in_meta)
   )
   names(items) <- names(items) |>
     sub("RECENT", paste("data in the last", spec$recent_years, "years"), x = _, fixed = TRUE) |>
-    sub("COVERAGE", paste0("coverage >= ", 100 * spec$min_coverage, "% of the window"), x = _, fixed = TRUE) |>
-    sub("SEASONS", if (isTRUE(spec$require_all_seasons)) "all four seasons" else "no season criterion", x = _, fixed = TRUE)
+    sub("SEASONS", paste("each season in >=", spec$min_years_per_season, "of these years"), x = _, fixed = TRUE)
 
   tibble::tibble(
     item = names(items),

@@ -62,7 +62,10 @@ The figures are written to `plots/`: `flowchart.png`,
 `sankey_wells.png` (where the wells drop out on the way to the usable
 wells), `sankey_scenarios.png` (the same for the criteria of each scenario),
 `sankey_combined.png` (preprocessing and scenarios in one diagram; each
-usable well is counted once, in the first scenario of the list it meets)
+usable well is counted once, in the first scenario of the list it meets),
+`missing_screen_depths.png` (where screen depths are missing, per state),
+`scenario_optimisation.png` (fitting the depth limit of the optimised
+scenario)
 and one `scenario_<id>.png` per scenario.
 
 ## Depth to groundwater
@@ -79,12 +82,14 @@ How the mean depth is calculated:
    (`n_obs_empty`, `n_obs_out_of_range`, `n_obs_implausible_dtw`).
 2. **Monthly means** of the valid measurements, so dense logger periods do
    not outweigh monthly manual readings.
-3. **Window**: the last `window_years` * 12 months up to the well's last
-   month with valid data.
+3. **Recent window**: the last `recent_years` (10) years up to the current
+   month (`reference_date`, NULL: today).
 4. **Spikes**: monthly means further than `max(spike_mad * MAD,
-   spike_min_dev)` from the well's median in the window are removed
+   spike_min_dev)` from the well's median in the recent window are removed
    (`n_months_spike`).
-5. **Means**: `gwl_mean` is the mean of the monthly means;
+5. **Mean window**: the `window_years` (5) most recent calendar years with
+   data in the recent window, not necessarily consecutive, so the mean
+   focuses on the latest data. `gwl_mean` is the mean of their monthly means;
    `gwl_mean_seasonal` averages each calendar month first and then the 12
    months, so a season with more gaps does not bias it (only when all 12
    calendar months have data).
@@ -92,13 +97,15 @@ How the mean depth is calculated:
    `dtw_mean_seasonal`); `dtw_shallowest` and `dtw_deepest` from the highest
    and lowest monthly mean. Only wells with `elev_gs` get a depth.
 
-How reliable the mean is: `coverage_window` (share of the window's months
-with data), `max_gap_months` (longest run of months without data, including
-the start of the window), `n_calendar_months`, `n_seasons` and `seasons`.
+How reliable the mean is: `min_years_per_season` (in how many years of the
+recent window the season with the fewest years has data), `seasons`,
+`coverage_recent` (share of the recent window's months with data),
+`max_gap_months`, and `first_year_window`/`last_year_window`/
+`n_years_window` (the years behind the mean).
 
-`usable` is TRUE for wells with a depth, screen depths, valid data within
-the last `recent_years` years, at least `min_coverage` of the window covered
-and, with `require_all_seasons`, data in all four seasons.
+`usable` is TRUE for wells with a depth, screen depths, valid data in the
+recent window and each season (DJF, MAM, JJA, SON) with data in at least
+`min_years_per_season` (5) of its years.
 `water_table_vs_screen` tells whether the mean water table is above, within
 or below the screen, and `flags` lists the problems found.
 
@@ -132,7 +139,12 @@ delay. Each filters by four properties, in m below ground surface:
 | FARM tolerant | 1-5 m | < 10 m | top 0-3 m below the water table | <= 4 m |
 | Very shallow | 0.5-3 m | < 5 m | top 0-1 m below the water table | <= 2 m |
 | Screen at the water table | 1-5 m | < 10 m | across the water table | <= 3 m |
-| Extended depth | 1-8 m | < 12 m | top 0-3 m below the water table | <= 4 m |
+| Shallow, most wells | 0 m to the fitted limit | < limit + 5 m | top 0-3 m below the water table | <= 4 m |
+
+"Shallow, most wells" is fitted to the data (`optimised_settings`): its
+limit of the mean depth is the shallowest on `depth_grid` (1-15 m) that
+still keeps `keep_share` (80 %) of the wells the deepest limit would keep.
+`scenario_optimisation.png` shows the wells against the limit.
 
 In all scenarios the screen bottom must be deeper than the annual low.
 
