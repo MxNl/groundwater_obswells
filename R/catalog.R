@@ -1,80 +1,90 @@
 # Database catalogue -------------------------------------------------------------
 #
-# Lists the tables, views and columns the user can read. Everything comes from
-# the PostgreSQL system catalogue, so no table is scanned: row counts are the
-# planner's estimates (pg_class.reltuples), NA for tables never analysed.
+# Lists the tables, views and columns the user can see. Everything comes from
+# SQL Server's catalogue views (sys.*), so no table is scanned: row counts come
+# from sys.partitions and sizes from sys.allocation_units. Comments are the
+# "MS_Description" extended properties.
 
 sql_tables <- "
-SELECT n.nspname::text AS table_schema,
-       c.relname::text AS table_name,
-       CASE c.relkind
-         WHEN 'r' THEN 'table'
-         WHEN 'p' THEN 'partitioned table'
-         WHEN 'v' THEN 'view'
-         WHEN 'm' THEN 'materialized view'
-         WHEN 'f' THEN 'foreign table'
-       END AS table_type,
-       c.reltuples::bigint AS n_rows_estimate,
-       pg_total_relation_size(c.oid) AS size_bytes,
-       obj_description(c.oid, 'pg_class') AS table_comment
-FROM pg_class c
-JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
-  AND NOT c.relispartition
-  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
-  AND n.nspname NOT LIKE 'pg\\_toast%'
-  AND has_schema_privilege(n.oid, 'USAGE')
-  AND has_table_privilege(c.oid, 'SELECT')
+SELECT s.name AS table_schema,
+       o.name AS table_name,
+       CASE o.type WHEN 'U' THEN 'table' WHEN 'V' THEN 'view' END AS table_type,
+       CAST(r.n_rows AS float) AS n_rows,
+       CAST(z.size_bytes AS float) AS size_bytes,
+       CAST(ep.value AS nvarchar(4000)) AS table_comment
+FROM sys.objects AS o
+JOIN sys.schemas AS s ON s.schema_id = o.schema_id
+-- rows of the heap (index 0) or clustered index (1), summed over partitions
+LEFT JOIN (
+  SELECT object_id, SUM(rows) AS n_rows
+  FROM sys.partitions
+  WHERE index_id IN (0, 1)
+  GROUP BY object_id
+) AS r ON r.object_id = o.object_id
+-- reserved pages of all indexes, 8 KB each
+LEFT JOIN (
+  SELECT p.object_id, SUM(CAST(a.total_pages AS bigint)) * 8192 AS size_bytes
+  FROM sys.partitions AS p
+  JOIN sys.allocation_units AS a ON a.container_id = p.partition_id
+  GROUP BY p.object_id
+) AS z ON z.object_id = o.object_id
+LEFT JOIN sys.extended_properties AS ep
+  ON ep.class = 1 AND ep.major_id = o.object_id AND ep.minor_id = 0
+ AND ep.name = 'MS_Description'
+WHERE o.type IN ('U', 'V')
+  AND o.is_ms_shipped = 0
 ORDER BY 1, 2
 "
 
 sql_columns <- "
-SELECT n.nspname::text AS table_schema,
-       c.relname::text AS table_name,
-       a.attnum::integer AS column_position,
-       a.attname::text AS column_name,
-       format_type(a.atttypid, a.atttypmod) AS data_type,
-       a.attnotnull AS not_null,
-       col_description(c.oid, a.attnum) AS column_comment
-FROM pg_attribute a
-JOIN pg_class c ON c.oid = a.attrelid
-JOIN pg_namespace n ON n.oid = c.relnamespace
-WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
-  AND NOT c.relispartition
-  AND a.attnum > 0
-  AND NOT a.attisdropped
-  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
-  AND n.nspname NOT LIKE 'pg\\_toast%'
-  AND has_schema_privilege(n.oid, 'USAGE')
-  AND has_table_privilege(c.oid, 'SELECT')
+SELECT s.name AS table_schema,
+       o.name AS table_name,
+       c.column_id AS column_position,
+       c.name AS column_name,
+       t.name +
+         CASE
+           WHEN t.name IN ('varchar', 'char', 'varbinary', 'binary')
+             THEN '(' + CASE WHEN c.max_length = -1 THEN 'max'
+                        ELSE CAST(c.max_length AS varchar(10)) END + ')'
+           WHEN t.name IN ('nvarchar', 'nchar')
+             THEN '(' + CASE WHEN c.max_length = -1 THEN 'max'
+                        ELSE CAST(c.max_length / 2 AS varchar(10)) END + ')'
+           WHEN t.name IN ('decimal', 'numeric')
+             THEN '(' + CAST(c.precision AS varchar(10)) + ',' +
+                  CAST(c.scale AS varchar(10)) + ')'
+           ELSE ''
+         END AS data_type,
+       CAST(CASE WHEN c.is_nullable = 0 THEN 1 ELSE 0 END AS bit) AS not_null,
+       CAST(ep.value AS nvarchar(4000)) AS column_comment
+FROM sys.columns AS c
+JOIN sys.objects AS o ON o.object_id = c.object_id
+JOIN sys.schemas AS s ON s.schema_id = o.schema_id
+JOIN sys.types AS t ON t.user_type_id = c.user_type_id
+LEFT JOIN sys.extended_properties AS ep
+  ON ep.class = 1 AND ep.major_id = c.object_id AND ep.minor_id = c.column_id
+ AND ep.name = 'MS_Description'
+WHERE o.type IN ('U', 'V')
+  AND o.is_ms_shipped = 0
 ORDER BY 1, 2, 3
 "
 
 # Reads tables and columns over one connection. Returns a list of two tibbles.
-fetch_catalog <- function(schemas = pg_schemas()) {
-  con <- pg_connect()
-  on.exit(pg_disconnect(con), add = TRUE)
+fetch_catalog <- function(schemas = db_schemas()) {
+  con <- db_connect()
+  on.exit(db_disconnect(con), add = TRUE)
 
-  tables <- pg_query(con, sql_tables)
-  columns <- pg_query(con, sql_columns)
+  tables <- db_query(con, sql_tables)
+  columns <- db_query(con, sql_columns)
 
   if (!is.null(schemas)) {
     tables <- dplyr::filter(tables, table_schema %in% schemas)
     columns <- dplyr::filter(columns, table_schema %in% schemas)
   }
-  # reltuples is -1 for tables never vacuumed or analysed, and views have
-  # no rows of their own.
-  tables <- dplyr::mutate(
-    tables,
-    n_rows_estimate = dplyr::if_else(
-      n_rows_estimate < 0 | table_type == "view", NA, n_rows_estimate
-    )
-  )
 
   list(tables = tables, columns = columns)
 }
 
-# One row per table: its size, row estimate and column names.
+# One row per table: its size, row count and column names.
 summarise_tables <- function(tables, columns) {
   cols <- columns |>
     dplyr::summarise(
@@ -86,7 +96,7 @@ summarise_tables <- function(tables, columns) {
     dplyr::left_join(cols, by = c("table_schema", "table_name")) |>
     dplyr::mutate(size_mb = round(size_bytes / 1024^2, 1)) |>
     dplyr::select(
-      table_schema, table_name, table_type, n_rows_estimate,
+      table_schema, table_name, table_type, n_rows,
       size_mb, n_columns, columns, table_comment
     ) |>
     dplyr::arrange(table_schema, table_name)
