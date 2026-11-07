@@ -703,6 +703,25 @@ plot_sankey_combined <- function(wells, scenarios, scenario_wells, steps, spec, 
 
 # Even coverage scenario ------------------------------------------------------------
 
+# All grid cells of Germany (cells of cell_m, aligned like grid_cell()),
+# clipped to the country outline, with their cell id.
+germany_grid <- function(germany, cell_m) {
+  outline <- sf::st_union(germany)
+  box <- sf::st_bbox(outline)
+  x0 <- floor(box[["xmin"]] / cell_m) * cell_m
+  y0 <- floor(box[["ymin"]] / cell_m) * cell_m
+  squares <- sf::st_make_grid(
+    outline, cellsize = cell_m, offset = c(x0, y0), what = "polygons"
+  )
+  centre <- sf::st_coordinates(sf::st_centroid(squares))
+  grid <- sf::st_sf(cell = grid_cell(centre[, 1], centre[, 2], cell_m), geometry = squares)
+  grid <- suppressWarnings(sf::st_intersection(grid, outline))
+  grid <- grid[!sf::st_is_empty(grid), ]
+  grid <- grid[sf::st_dimension(grid) == 2, ]
+  sf::st_agr(grid) <- "constant"
+  grid
+}
+
 optimised_threshold_labels <- c(
   dtw_mean_max = "Limit of the mean depth (m)",
   dtw_max_extra = "Maximum depth: limit + ... (m)",
@@ -717,24 +736,40 @@ plot_coverage_optimisation <- function(optimisation, germany, plot_config,
                                        font = setup_plot_font(plot_config$font)) {
   setup_plot_font(plot_config$font)
   s <- optimisation$scenario
-  cells <- optimisation$cells |>
-    dplyr::mutate(covered = selected > 0)
+  grid <- germany_grid(germany, optimisation$cell_km * 1000) |>
+    dplyr::left_join(dplyr::select(optimisation$cells, cell, usable, selected), by = "cell") |>
+    dplyr::mutate(
+      usable = dplyr::coalesce(usable, 0L),
+      selected = dplyr::coalesce(selected, 0L),
+      status = dplyr::case_when(
+        selected > 0 ~ "covered",
+        usable > 0 ~ "usable wells, not covered",
+        .default = "no usable wells"
+      )
+    )
+  fills <- c(
+    "covered" = s$colour,
+    "usable wells, not covered" = "grey80",
+    "no usable wells" = "grey96"
+  )
+  covered_cells <- dplyr::filter(grid, selected > 0)
+  sf::st_agr(covered_cells) <- "constant"
+  labels <- sf::st_point_on_surface(covered_cells)
+  labels <- cbind(sf::st_drop_geometry(labels), sf::st_coordinates(labels))
+  n_with_usable <- sum(grid$usable > 0)
+  n_covered <- sum(grid$selected > 0)
 
   map <- ggplot2::ggplot() +
-    ggplot2::geom_rect(
-      ggplot2::aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-      data = dplyr::filter(cells, !covered), fill = "grey88", colour = "white", linewidth = 0.3
-    ) +
-    ggplot2::geom_rect(
-      ggplot2::aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
-      data = dplyr::filter(cells, covered), fill = s$colour, alpha = 0.75,
+    ggplot2::geom_sf(
+      ggplot2::aes(fill = status), data = grid,
       colour = "white", linewidth = 0.3
     ) +
     ggplot2::geom_text(
-      ggplot2::aes((xmin + xmax) / 2, (ymin + ymax) / 2, label = selected),
-      data = dplyr::filter(cells, covered), family = font, size = 2.3, colour = "white"
+      ggplot2::aes(X, Y, label = selected),
+      data = labels, family = font, size = 2.3, colour = "white"
     ) +
     ggplot2::geom_sf(data = germany, fill = NA, colour = "grey40", linewidth = 0.25) +
+    ggplot2::scale_fill_manual(values = fills, guide = "none") +
     ggplot2::coord_sf(datum = NA, crs = sf::st_crs(germany)) +
     theme_maps(font) +
     ggplot2::theme(plot.margin = ggplot2::margin(0, 5, 0, 0))
@@ -769,12 +804,14 @@ plot_coverage_optimisation <- function(optimisation, germany, plot_config,
     patchwork::plot_annotation(
       title = paste0(
         s$name, ": ", label_n(optimisation$wells_chosen), " wells in ",
-        optimisation$cells_chosen, " of ", nrow(cells), " cells"
+        n_covered, " of ", nrow(grid), " cells"
       ),
       subtitle = paste0(
-        "Left: ", optimisation$cell_km, " km cells with usable wells, ",
-        colour_word("covered", s$colour), " by the scenario (number of wells) or ",
-        "not (grey). Right: the strictest thresholds that keep ",
+        "Left: all ", optimisation$cell_km, " km cells of Germany, ",
+        colour_word("covered", s$colour), " by the scenario (number of wells), ",
+        "with usable wells but not covered (grey, ", n_with_usable - n_covered,
+        " cells) or without any usable well (light grey, ", nrow(grid) - n_with_usable,
+        " cells, no threshold can cover them). Right: the strictest thresholds that keep ",
         100 * optimisation$keep_share, " % of the cells the loosest ones cover ",
         "(dashed line); each panel varies one threshold, the others at the chosen values."
       ),
