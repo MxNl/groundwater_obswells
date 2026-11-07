@@ -165,9 +165,11 @@ plot_scenario <- function(s, points, scenario_wells, steps, germany, plot_config
       colour = "grey85", linewidth = 0.3
     ) +
     ggplot2::scale_x_continuous(limits = c(0, 1), expand = ggplot2::expansion(0)) +
-    ggplot2::scale_y_continuous(limits = c(-nrow(counts) - 0.6, 3.2), expand = ggplot2::expansion(0)) +
+    ggplot2::scale_y_continuous(limits = c(-nrow(counts) - 0.6, 3.9), expand = ggplot2::expansion(0)) +
+    # the large number may reach above the panel when the subtitle is long
+    ggplot2::coord_cartesian(clip = "off") +
     theme_maps(font) +
-    ggplot2::theme(plot.margin = ggplot2::margin(0, 10, 6, 10))
+    ggplot2::theme(plot.margin = ggplot2::margin(12, 10, 6, 10))
 
   # distributions of the four properties
   long <- function(data) {
@@ -192,18 +194,33 @@ plot_scenario <- function(s, points, scenario_wells, steps, germany, plot_config
         ymax = as.numeric(property) + 0.92
       ),
       data = ranges, inherit.aes = FALSE,
-      fill = colour, alpha = 0.12
+      fill = colour, alpha = 0.18
     ) +
+    # densities on the visible range only (from, to): computed over the whole
+    # range of all wells (deep wells reach > 100 m), the 512 points of the
+    # density would be spread over that range and the curve edgy here
     ggridges::geom_density_ridges(
       ggplot2::aes(height = ggplot2::after_stat(ndensity)),
-      stat = "density_ridges", scale = 0.9, fill = "grey88", colour = "grey60",
-      linewidth = 0.3, rel_min_height = 0.002, bandwidth = 0.3
+      stat = "density_ridges", scale = 0.9, fill = "grey75", colour = "grey55",
+      alpha = 0.45, linewidth = 0.3, rel_min_height = 0.002, bandwidth = 0.3,
+      from = 0, to = x_max
     ) +
     ggridges::geom_density_ridges(
       ggplot2::aes(height = ggplot2::after_stat(ndensity)),
       data = sel_dens, stat = "density_ridges", scale = 0.9,
       fill = colour, colour = "white", alpha = 0.75,
-      linewidth = 0.4, rel_min_height = 0.002, bandwidth = 0.3
+      linewidth = 0.4, rel_min_height = 0.002, bandwidth = 0.3,
+      from = 0, to = x_max
+    ) +
+    # edges of the allowed range, visible above the curves
+    ggplot2::geom_segment(
+      ggplot2::aes(x = x, xend = x, y = y, yend = y + 0.92),
+      data = tidyr::pivot_longer(
+        dplyr::mutate(ranges, y = as.numeric(property)),
+        c(from, to), values_to = "x"
+      ) |>
+        dplyr::filter(x > 0, x < x_max),
+      inherit.aes = FALSE, colour = colour, linewidth = 0.4, linetype = "22"
     ) +
     # the selected wells as ticks below their ridge
     ggplot2::geom_point(
