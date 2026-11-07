@@ -92,18 +92,20 @@ list(
         "Screens across the water table sample the uppermost, youngest groundwater, where substances from the surface arrive first."
     )
   ),
-  # Scenario fitted to the data over all four thresholds: of all combinations
-  # on the grids that keep at least keep_share of the wells of the loosest
-  # combination, the strictest (each threshold scaled 0..1 on its grid, the
-  # smallest sum). Maximum depth = dtw_mean_max + dtw_max_extra. Screen top
-  # below the water table and "not falling dry" as in the other scenarios.
+  # Scenario fitted to the data for wells across all of Germany, also in the
+  # south: Germany is divided into cells of cell_km; of all threshold
+  # combinations on the grids whose wells cover at least keep_share of the
+  # cells the loosest combination covers, the strictest (each threshold
+  # scaled 0..1 on its grid, weighted, the smallest sum). Maximum depth =
+  # dtw_mean_max + dtw_max_extra. Screen top below the water table and "not
+  # falling dry" as in the other scenarios.
   tar_target(
-    optimised_settings,
+    coverage_settings,
     list(
-      id = "shallow_most_wells", name = "Shallow, most wells", colour = "#6A4C93",
-      dtw_mean_min = 0, keep_share = 0.8,
+      id = "even_coverage", name = "Even coverage", colour = "#6A4C93",
+      cell_km = 50, dtw_mean_min = 0, keep_share = 0.8,
       grids = list(
-        dtw_mean_max = seq(1, 10, by = 0.5),
+        dtw_mean_max = seq(1, 15, by = 0.5),
         dtw_max_extra = 1:8,
         top_below_max = 1:5,
         screen_length_max = 1:6
@@ -113,7 +115,7 @@ list(
       weights = list(dtw_mean_max = 1, dtw_max_extra = 1, top_below_max = 1, screen_length_max = 1)
     )
   ),
-  tar_target(scenario_optimisation, optimise_shallow_scenario(well_dtw, optimised_settings)),
+  tar_target(scenario_optimisation, optimise_coverage_scenario(well_points, coverage_settings)),
   tar_target(scenarios, dplyr::bind_rows(scenarios_fixed, scenario_optimisation$scenario)),
   tar_target(
     plot_config,
@@ -147,7 +149,7 @@ list(
   ),
   tar_target(
     optimisation_plot,
-    plot_optimisation(scenario_optimisation, plot_config, plot_font),
+    plot_coverage_optimisation(scenario_optimisation, germany, plot_config, plot_font),
     format = "file"
   ),
   tar_target(

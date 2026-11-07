@@ -153,44 +153,60 @@ assign_scenario_groups <- function(scenario_wells, scenarios) {
     dplyr::mutate(scenario_id = dplyr::coalesce(scenario_id, "none"))
 }
 
-# Optimised scenario ---------------------------------------------------------------
+# Scenario for an even coverage of Germany ----------------------------------------
 
-# A scenario fitted to the data: as strict as possible without losing too
-# many wells, over all four thresholds. Each threshold has a grid from strict
-# to loose (settings$grids: dtw_mean_max, dtw_max_extra (maximum depth =
-# dtw_mean_max + dtw_max_extra), top_below_max, screen_length_max). The
-# reference is the number of wells of the loosest combination; candidates
-# are all combinations that keep at least keep_share of it; of those, the
-# strictest wins: each threshold scaled to 0 (strictest) .. 1 (loosest) on
-# its grid, the smallest sum (ties: more wells). settings$weights (default 1
-# each) weight the thresholds in that sum: a higher weight makes loosening
-# that threshold more expensive, so it stays stricter. The screen rule "below" and
-# "not falling dry" stay as they are. Returns the scenario (one row as in the
-# scenarios table), the profiles (wells along each grid with the other
-# thresholds at the chosen values) and the reference.
-optimise_shallow_scenario <- function(wells, settings) {
-  base <- dplyr::filter(wells, usable)
+# Grid cell of each point (X, Y in m, EPSG 25832), as one integer id.
+grid_cell <- function(x, y, cell_m) {
+  col <- floor(x / cell_m)
+  row <- floor(y / cell_m)
+  as.integer(row * 10000 + col)
+}
+
+# A scenario fitted to the data so the selected wells cover Germany as evenly
+# as possible, also the south with its deeper groundwater, while staying as
+# shallow and strict as possible. Germany is divided into square cells of
+# cell_km; "coverage" is the number of cells with at least one selected well.
+# Each of the four thresholds has a grid from strict to loose
+# (settings$grids: dtw_mean_max, dtw_max_extra (maximum depth = dtw_mean_max
+# + dtw_max_extra), top_below_max, screen_length_max). The reference is the
+# coverage of the loosest combination; candidates are all combinations that
+# reach at least keep_share of it; of those, the strictest wins: each
+# threshold scaled to 0 (strictest) .. 1 (loosest) on its grid, weighted
+# (settings$weights, default 1 each) and summed, the smallest sum (ties: more
+# cells, then more wells). Screen top below the water table and "not falling
+# dry" stay as in the other scenarios. `points` are the wells with X, Y
+# (well_points). Returns the scenario (one row as in the scenarios table),
+# the profiles (cells and wells along each grid, the other thresholds at the
+# chosen values), the cells and the reference.
+optimise_coverage_scenario <- function(points, settings) {
+  base <- dplyr::filter(points, usable)
+  cell_m <- settings$cell_km * 1000
   g <- lapply(settings$grids, sort)
   # criteria that do not depend on the thresholds
   fixed <- base$dtw_mean >= settings$dtw_mean_min &
     base$screen_top >= base$dtw_mean &
     base$screen_bot >= base$dtw_annual_low &
     base$screen_length > 0
-  fixed <- fixed %in% TRUE
-  dtw_mean <- base$dtw_mean[fixed]
-  deepest <- base$dtw_deepest[fixed]
-  top_rel <- (base$screen_top - base$dtw_mean)[fixed]
-  len <- base$screen_length[fixed]
+  base <- base[fixed %in% TRUE, ]
+  cell <- grid_cell(base$X, base$Y, cell_m)
+  top_rel <- base$screen_top - base$dtw_mean
 
-  count <- function(l, e, t, s) {
-    sum(dtw_mean <= l & deepest < l + e & top_rel <= t & len <= s, na.rm = TRUE)
+  select <- function(l, e, t, s) {
+    base$dtw_mean <= l & base$dtw_deepest < l + e & top_rel <= t & base$screen_length <= s
+  }
+  measure <- function(l, e, t, s) {
+    keep <- select(l, e, t, s) %in% TRUE
+    c(cells = length(unique(cell[keep])), wells = sum(keep))
   }
   combos <- expand.grid(
     dtw_mean_max = g$dtw_mean_max, dtw_max_extra = g$dtw_max_extra,
     top_below_max = g$top_below_max, screen_length_max = g$screen_length_max
   )
-  combos$n <- mapply(count, combos$dtw_mean_max, combos$dtw_max_extra,
-                     combos$top_below_max, combos$screen_length_max)
+  m <- mapply(measure, combos$dtw_mean_max, combos$dtw_max_extra,
+              combos$top_below_max, combos$screen_length_max)
+  combos$cells <- m["cells", ]
+  combos$wells <- m["wells", ]
+
   scaled <- function(x, grid) (match(x, grid) - 1) / max(length(grid) - 1, 1)
   w <- utils::modifyList(
     list(dtw_mean_max = 1, dtw_max_extra = 1, top_below_max = 1, screen_length_max = 1),
@@ -201,23 +217,42 @@ optimise_shallow_scenario <- function(wells, settings) {
     w$top_below_max * scaled(combos$top_below_max, g$top_below_max) +
     w$screen_length_max * scaled(combos$screen_length_max, g$screen_length_max)
 
-  n_ref <- max(count(max(g$dtw_mean_max), max(g$dtw_max_extra), max(g$top_below_max), max(g$screen_length_max)), 1)
-  candidates <- combos[combos$n >= settings$keep_share * n_ref, ]
-  best <- candidates[order(candidates$looseness, -candidates$n), ][1, ]
+  loosest <- measure(max(g$dtw_mean_max), max(g$dtw_max_extra), max(g$top_below_max), max(g$screen_length_max))
+  cells_ref <- max(loosest[["cells"]], 1)
+  candidates <- combos[combos$cells >= settings$keep_share * cells_ref, ]
+  best <- candidates[order(candidates$looseness, -candidates$cells, -candidates$wells), ][1, ]
 
   # profiles: each threshold along its grid, the others at the chosen values
   profile <- function(name) {
-    values <- g[[name]]
     args <- best[c("dtw_mean_max", "dtw_max_extra", "top_below_max", "screen_length_max")]
-    n <- vapply(values, function(v) {
+    res <- vapply(g[[name]], function(v) {
       args[[name]] <- v
-      count(args$dtw_mean_max, args$dtw_max_extra, args$top_below_max, args$screen_length_max)
-    }, numeric(1))
-    tibble::tibble(threshold = name, value = values, n = n, chosen = values == best[[name]])
+      measure(args$dtw_mean_max, args$dtw_max_extra, args$top_below_max, args$screen_length_max)
+    }, numeric(2))
+    tibble::tibble(
+      threshold = name, value = g[[name]], cells = res["cells", ], wells = res["wells", ],
+      chosen = g[[name]] == best[[name]]
+    )
   }
   profiles <- dplyr::bind_rows(lapply(names(g), profile))
 
-  m <- function(x) format(x, decimal.mark = ".", trim = TRUE)
+  # cells: all cells with usable wells (before the fixed criteria) and
+  # whether the chosen thresholds cover them
+  all_usable <- dplyr::filter(points, usable)
+  chosen_keep <- select(best$dtw_mean_max, best$dtw_max_extra, best$top_below_max, best$screen_length_max) %in% TRUE
+  cells <- tibble::tibble(cell = grid_cell(all_usable$X, all_usable$Y, cell_m)) |>
+    dplyr::count(cell, name = "usable") |>
+    dplyr::left_join(
+      tibble::tibble(cell = cell[chosen_keep]) |> dplyr::count(cell, name = "selected"),
+      by = "cell"
+    ) |>
+    dplyr::mutate(
+      selected = dplyr::coalesce(selected, 0L),
+      xmin = (cell %% 10000) * cell_m, ymin = (cell %/% 10000) * cell_m,
+      xmax = xmin + cell_m, ymax = ymin + cell_m
+    )
+
+  num <- function(x) format(x, decimal.mark = ".", trim = TRUE)
   scenario <- tibble::tibble(
     id = settings$id,
     name = settings$name,
@@ -229,16 +264,19 @@ optimise_shallow_scenario <- function(wells, settings) {
     screen_length_max = best$screen_length_max,
     colour = settings$colour,
     purpose = paste0(
-      "Fitted to the data: the strictest combination of the four thresholds that ",
-      "still keeps ", round(100 * best$n / n_ref), " % of the wells of the loosest ",
-      "one (mean depth up to ", m(best$dtw_mean_max), " m, maximum depth < ",
-      m(best$dtw_mean_max + best$dtw_max_extra), " m, screen top up to ",
-      m(best$top_below_max), " m below the water table, screen up to ",
-      m(best$screen_length_max), " m)."
+      "Fitted to the data for wells across all of Germany: the strictest ",
+      "thresholds whose wells still cover ", round(100 * best$cells / cells_ref),
+      " % of the ", settings$cell_km, " km cells the loosest thresholds cover ",
+      "(mean depth up to ", num(best$dtw_mean_max), " m, maximum depth < ",
+      num(best$dtw_mean_max + best$dtw_max_extra), " m, screen top up to ",
+      num(best$top_below_max), " m below the water table, screen up to ",
+      num(best$screen_length_max), " m)."
     )
   )
   list(
-    scenario = scenario, profiles = profiles, combos = tibble::as_tibble(combos),
-    n_ref = n_ref, n_chosen = best$n, keep_share = settings$keep_share
+    scenario = scenario, profiles = profiles, cells = cells,
+    combos = tibble::as_tibble(combos), cells_ref = cells_ref,
+    cells_chosen = best$cells, wells_chosen = best$wells,
+    keep_share = settings$keep_share, cell_km = settings$cell_km
   )
 }

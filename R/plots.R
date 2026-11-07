@@ -20,13 +20,21 @@ scenario_properties <- c(
   screen_length = "Screen length"
 )
 
-# Allowed range of a property in a scenario, NA where the criterion is not a
-# fixed range (the screen top lies relative to the water table).
+# Allowed range of a property in a scenario. The screen top lies relative to
+# the mean water table, so its range in m below ground is the one the mean
+# depth and the screen rule allow together: "below" from the smallest mean
+# depth to the largest plus top_below_max, "spans" from 0 to the largest
+# mean depth.
 scenario_ranges <- function(s) {
+  top <- if (s$screen_rule == "below") {
+    c(s$dtw_mean_min, s$dtw_mean_max + s$top_below_max)
+  } else {
+    c(0, s$dtw_mean_max)
+  }
   tibble::tibble(
     property = factor(names(scenario_properties), levels = rev(names(scenario_properties))),
-    from = c(s$dtw_mean_min, 0, NA, 0),
-    to = c(s$dtw_mean_max, s$dtw_max, NA, s$screen_length_max)
+    from = c(s$dtw_mean_min, 0, top[1], 0),
+    to = c(s$dtw_mean_max, s$dtw_max, top[2], s$screen_length_max)
   )
 }
 
@@ -223,7 +231,8 @@ plot_scenario <- function(s, points, scenario_wells, steps, germany, plot_config
     s$purpose, " Map: the ", colour_word("selected wells", colour),
     " among all usable wells (grey). Right: wells left after each criterion ",
     "and the distribution of the four properties (grey: usable wells; ",
-    "shaded: allowed range)."
+    "shaded: allowed range, for the screen top the range the mean depth and ",
+    "the screen rule allow together)."
   )
 
   figure <- patchwork::wrap_elements(full = map) + numbers + ridges +
@@ -692,59 +701,89 @@ plot_sankey_combined <- function(wells, scenarios, scenario_wells, steps, spec, 
   )
 }
 
-# Optimised scenario ------------------------------------------------------------------
+# Even coverage scenario ------------------------------------------------------------
 
 optimised_threshold_labels <- c(
   dtw_mean_max = "Limit of the mean depth (m)",
   dtw_max_extra = "Maximum depth: limit + ... (m)",
-  top_below_max = "Screen top: up to ... m below the water table",
+  top_below_max = "Screen top: up to ... m\nbelow the water table",
   screen_length_max = "Screen length up to ... (m)"
 )
 
-# Profiles of the optimised scenario: for each of the four thresholds the
-# wells along its grid, the other thresholds at the chosen values. Shows
-# how many wells a stricter or looser value would give.
-plot_optimisation <- function(optimisation, plot_config,
-                              font = setup_plot_font(plot_config$font)) {
+# The even coverage scenario: map of the cells with usable wells, covered or
+# not by the selected wells, and for each of the four thresholds the covered
+# cells along its grid, the other thresholds at the chosen values.
+plot_coverage_optimisation <- function(optimisation, germany, plot_config,
+                                       font = setup_plot_font(plot_config$font)) {
   setup_plot_font(plot_config$font)
   s <- optimisation$scenario
-  target <- optimisation$keep_share * optimisation$n_ref
+  cells <- optimisation$cells |>
+    dplyr::mutate(covered = selected > 0)
+
+  map <- ggplot2::ggplot() +
+    ggplot2::geom_rect(
+      ggplot2::aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+      data = dplyr::filter(cells, !covered), fill = "grey88", colour = "white", linewidth = 0.3
+    ) +
+    ggplot2::geom_rect(
+      ggplot2::aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+      data = dplyr::filter(cells, covered), fill = s$colour, alpha = 0.75,
+      colour = "white", linewidth = 0.3
+    ) +
+    ggplot2::geom_text(
+      ggplot2::aes((xmin + xmax) / 2, (ymin + ymax) / 2, label = selected),
+      data = dplyr::filter(cells, covered), family = font, size = 2.3, colour = "white"
+    ) +
+    ggplot2::geom_sf(data = germany, fill = NA, colour = "grey40", linewidth = 0.25) +
+    ggplot2::coord_sf(datum = NA, crs = sf::st_crs(germany)) +
+    theme_maps(font) +
+    ggplot2::theme(plot.margin = ggplot2::margin(0, 5, 0, 0))
+
+  target <- optimisation$keep_share * optimisation$cells_ref
   profiles <- optimisation$profiles |>
     dplyr::mutate(threshold = factor(
       optimised_threshold_labels[threshold], levels = optimised_threshold_labels
     ))
   chosen <- dplyr::filter(profiles, chosen)
-
-  p <- ggplot2::ggplot(profiles, ggplot2::aes(value, n)) +
+  curves <- ggplot2::ggplot(profiles, ggplot2::aes(value, cells)) +
     ggplot2::geom_hline(yintercept = target, colour = "grey60", linewidth = 0.3, linetype = "22") +
     ggplot2::geom_line(colour = "grey55", linewidth = 0.6) +
-    ggplot2::geom_point(colour = "grey55", size = 1.3) +
-    ggplot2::geom_point(data = chosen, colour = s$colour, size = 3) +
+    ggplot2::geom_point(colour = "grey55", size = 1.1) +
+    ggplot2::geom_point(data = chosen, colour = s$colour, size = 2.6) +
     ggplot2::geom_text(
-      ggplot2::aes(label = paste0(value, ": ", label_n(n))),
-      data = chosen, vjust = -1, family = font, size = 3.5,
-      colour = s$colour, fontface = "bold"
+      ggplot2::aes(label = value),
+      data = chosen, vjust = -1, family = font, size = 3.3, colour = s$colour, fontface = "bold"
     ) +
     ggplot2::facet_wrap(ggplot2::vars(threshold), scales = "free_x", ncol = 2) +
-    ggplot2::scale_y_continuous(labels = label_n, limits = c(0, NA), expand = ggplot2::expansion(c(0, 0.15))) +
-    ggplot2::labs(
-      title = paste0(s$name, ": ", label_n(optimisation$n_chosen), " wells"),
-      subtitle = paste0(
-        "The ", colour_word("chosen thresholds", s$colour), " are the strictest ",
-        "combination that keeps ", 100 * optimisation$keep_share, " % of the ",
-        label_n(optimisation$n_ref), " wells of the loosest one (dashed line). ",
-        "Each panel varies one threshold, the others at the chosen values."
-      ),
-      x = NULL, y = "Wells",
-      caption = plot_config$caption
-    ) +
-    theme_charts(font, base_size = 12) +
+    ggplot2::scale_y_continuous(limits = c(0, NA), expand = ggplot2::expansion(c(0, 0.2))) +
+    ggplot2::labs(x = NULL, y = paste0("Covered ", optimisation$cell_km, " km cells")) +
+    theme_charts(font, base_size = 11) +
     ggplot2::theme(
-      strip.text = ggplot2::element_text(face = "bold", hjust = 0),
-      panel.spacing = grid::unit(1.2, "lines")
+      strip.text = ggplot2::element_text(face = "bold", hjust = 0, lineheight = 1),
+      panel.spacing = grid::unit(1, "lines"),
+      plot.margin = ggplot2::margin(10, 10, 0, 10)
     )
 
-  save_figure(p, file.path(plot_config$dir, "scenario_optimisation.png"), width = figure_width, height = 7)
+  figure <- patchwork::wrap_elements(full = map) + curves +
+    patchwork::plot_layout(widths = c(1, 1.15)) +
+    patchwork::plot_annotation(
+      title = paste0(
+        s$name, ": ", label_n(optimisation$wells_chosen), " wells in ",
+        optimisation$cells_chosen, " of ", nrow(cells), " cells"
+      ),
+      subtitle = paste0(
+        "Left: ", optimisation$cell_km, " km cells with usable wells, ",
+        colour_word("covered", s$colour), " by the scenario (number of wells) or ",
+        "not (grey). Right: the strictest thresholds that keep ",
+        100 * optimisation$keep_share, " % of the cells the loosest ones cover ",
+        "(dashed line); each panel varies one threshold, the others at the chosen values."
+      ),
+      caption = plot_config$caption,
+      theme = theme_maps(font) +
+        ggplot2::theme(plot.subtitle = element_subtitle(margin = ggplot2::margin(t = 4, b = 8)))
+    )
+
+  save_figure(figure, file.path(plot_config$dir, "scenario_optimisation.png"), width = figure_width, height = 7.5)
 }
 
 # Missing screen depths -----------------------------------------------------------------

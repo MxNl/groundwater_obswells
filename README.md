@@ -64,8 +64,8 @@ wells), `sankey_scenarios.png` (the same for the criteria of each scenario),
 `sankey_combined.png` (preprocessing and scenarios in one diagram; each
 usable well is counted once, in the first scenario of the list it meets),
 `missing_screen_depths.png` (where screen depths are missing, per state),
-`scenario_optimisation.png` (fitting the depth limit of the optimised
-scenario)
+`scenario_optimisation.png` (the cells covered by the "Even coverage"
+scenario and how its thresholds were fitted)
 and one `scenario_<id>.png` per scenario.
 
 ## Depth to groundwater
@@ -139,20 +139,23 @@ ground surface, in this order:
 | FARM tolerant | 1-5 m | < 10 m | 0-3 m below the water table | <= 4 m |
 | Very shallow | 0.5-3 m | < 5 m | 0-1 m below the water table | <= 2 m |
 | Screen at the water table | 1-5 m | < 10 m | above the water table | <= 3 m |
-| Shallow, most wells | fitted | fitted | fitted | fitted |
+| Even coverage | fitted | fitted | fitted | fitted |
 
 In all scenarios the screen bottom must be deeper than the annual low.
 
-"Shallow, most wells" is fitted to the data (`optimised_settings`) over all
-four thresholds: of all combinations on the grids (mean depth limit 1-10 m,
-maximum depth = limit + 1-8 m, screen top 1-5 m below the water table,
-screen length 1-6 m) that keep at least `keep_share` (80 %) of the wells of
-the loosest combination, the strictest one. "Strictest": each threshold is
-scaled from 0 (strictest) to 1 (loosest) on its grid and the weighted sum
-(`weights`, default 1 each) is the smallest. A higher weight keeps a
-threshold stricter, at the cost of the others. `scenario_optimisation.png`
-shows for each threshold how many wells a stricter or looser value would
-give, the others at the chosen values.
+"Even coverage" is fitted to the data (`coverage_settings`) so its wells
+are spread across all of Germany, also the south with its deeper
+groundwater, while staying as shallow and strict as possible. Germany is
+divided into cells of `cell_km` (50 km); of all threshold combinations on the
+grids (mean depth limit 1-15 m, maximum depth = limit + 1-8 m, screen top
+1-5 m below the water table, screen length 1-6 m) whose wells cover at least
+`keep_share` (80 %) of the cells the loosest combination covers, the
+strictest one wins: each threshold is scaled from 0 (strictest) to 1
+(loosest) on its grid and the weighted sum (`weights`, default 1 each) is
+the smallest. A higher `keep_share` covers more cells, mostly in the south,
+with looser thresholds. `scenario_optimisation.png` maps the covered cells
+and shows for each threshold how many cells a stricter or looser value
+would cover.
 
 Each scenario figure shows the selected wells on a map of Germany, their
 number with the wells left after each criterion, and the distribution of
