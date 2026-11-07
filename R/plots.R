@@ -881,3 +881,129 @@ plot_missing_screens <- function(points, germany, plot_config,
     )
   save_figure(figure, file.path(plot_config$dir, "missing_screen_depths.png"), width = figure_width, height = 7.5)
 }
+
+# Method flow chart -------------------------------------------------------------------
+
+# The preprocessing and filtering steps in short words, with the thresholds
+# from the settings: per step a title and the applied logic, grouped by where
+# the step works (single measurements, time series, wells, scenarios).
+method_steps <- function(spec, coverage) {
+  # numbers with a real minus sign
+  m <- function(x) sub("^-", "\u2212", format(x, decimal.mark = ".", trim = TRUE, big.mark = ","))
+  tibble::tribble(
+    ~phase, ~title, ~logic,
+    "Each measurement", "Complete records",
+      "Keep measurements with well ID and date; an empty level counts as missing.",
+    "Each measurement", "Error codes and impossible levels",
+      paste0("Remove levels outside ", m(spec$gwl_valid_range[1]), " to ",
+             m(spec$gwl_valid_range[2]), " m a.s.l. (catches codes such as \u2212999 or 9999)."),
+    "Each measurement", "Implausible depth to groundwater",
+      paste0("Depth = ground elevation \u2212 level. Remove levels more than ",
+             m(-spec$dtw_valid_range[1]), " m above ground or more than ",
+             m(spec$dtw_valid_range[2]), " m below ground."),
+    "Time series", "Monthly means",
+      "Mean of the valid levels per well and month, so dense logger periods do not dominate.",
+    "Time series", "Recent window",
+      paste0("Only the last ", spec$recent_years, " years up to the current month."),
+    "Time series", "Spikes",
+      paste0("Remove monthly means further than ", m(spec$spike_mad), " \u00d7 MAD (at least ",
+             m(spec$spike_min_dev), " m) from the well's median in the recent window."),
+    "Time series", "Mean, maximum and annual low",
+      paste0("From the ", spec$window_years, " most recent years with data: mean of the monthly ",
+             "means, deepest month, and the lowest month of each year averaged (annual low)."),
+    "Time series", "Depth to groundwater",
+      "Ground elevation \u2212 level, in m below ground: mean, maximum and annual low depth.",
+    "Usable wells", "Complete metadata",
+      "Ground elevation, screen top and screen bottom present.",
+    "Usable wells", "Enough recent data in every season",
+      paste0("Each season (winter, spring, summer, autumn) has data in at least ",
+             spec$min_years_per_season, " of the ", spec$recent_years, " years."),
+    "Scenarios", "Five criteria, one after the other",
+      paste0("(1) Mean depth range, (2) maximum depth, (3) screen top relative to the mean ",
+             "water table, (4) not falling dry: screen bottom below the annual low, ",
+             "(5) screen length."),
+    "Scenarios", "Fixed and fitted thresholds",
+      paste0("FARM strict and tolerant, very shallow, screen at the water table: fixed. ",
+             "Even coverage: the strictest thresholds whose wells still cover ",
+             100 * coverage$keep_share, " % of the ", coverage$cell_km,
+             " km cells the loosest ones cover.")
+  )
+}
+
+plot_method_flowchart <- function(spec, coverage, plot_config,
+                                  font = setup_plot_font(plot_config$font)) {
+  setup_plot_font(plot_config$font)
+  steps <- method_steps(spec, coverage)
+  wrap <- function(x, width) vapply(x, function(t) paste(strwrap(t, width), collapse = "\n"), character(1))
+  # no line break between a number and its unit
+  steps$logic <- gsub("([0-9]) (m|years|km)\\b", "\\1\u00a0\\2", steps$logic)
+  steps$logic <- wrap(steps$logic, 108)
+  steps$lines <- lengths(strsplit(steps$logic, "\n", fixed = TRUE))
+
+  # vertical layout: box height from the lines of text, a header per phase
+  box_w <- 9
+  line_h <- 0.24
+  pad <- 0.18
+  gap <- 0.32
+  header_h <- 0.55
+  steps$h <- pad * 2 + 0.3 + steps$lines * line_h
+  y <- 0
+  steps$ymax <- NA_real_
+  headers <- list()
+  for (i in seq_len(nrow(steps))) {
+    if (i == 1 || steps$phase[i] != steps$phase[i - 1]) {
+      if (i > 1) y <- y - 0.25
+      headers[[length(headers) + 1]] <- tibble::tibble(phase = steps$phase[i], y = y)
+      y <- y - header_h
+    }
+    steps$ymax[i] <- y
+    y <- y - steps$h[i] - gap
+  }
+  steps$ymin <- steps$ymax - steps$h
+  headers <- dplyr::bind_rows(headers)
+  # arrows between boxes (also across phases)
+  arrows <- tibble::tibble(
+    y = steps$ymin[-nrow(steps)],
+    yend = steps$ymax[-1]
+  )
+  phase_colours <- c(
+    "Each measurement" = "grey40", "Time series" = "grey40",
+    "Usable wells" = "grey40", "Scenarios" = "#E4572E"
+  )
+
+  p <- ggplot2::ggplot() +
+    ggplot2::geom_segment(
+      ggplot2::aes(x = 0, xend = 0, y = y, yend = yend),
+      data = arrows, colour = "grey55", linewidth = 0.4,
+      arrow = grid::arrow(length = grid::unit(1.8, "mm"), type = "closed")
+    ) +
+    ggplot2::geom_rect(
+      ggplot2::aes(xmin = -box_w / 2, xmax = box_w / 2, ymin = ymin, ymax = ymax),
+      data = steps, fill = "grey96", colour = "grey60", linewidth = 0.35
+    ) +
+    ggplot2::geom_text(
+      ggplot2::aes(x = -box_w / 2 + 0.2, y = ymax - pad, label = title),
+      data = steps, hjust = 0, vjust = 1, family = font, size = 3.9,
+      fontface = "bold", colour = "grey10"
+    ) +
+    ggplot2::geom_text(
+      ggplot2::aes(x = -box_w / 2 + 0.2, y = ymax - pad - 0.34, label = logic),
+      data = steps, hjust = 0, vjust = 1, family = font, size = 3.2,
+      colour = "grey30", lineheight = 1.05
+    ) +
+    ggplot2::geom_text(
+      ggplot2::aes(x = -box_w / 2, y = y - 0.12, label = toupper(phase)),
+      data = headers, hjust = 0, vjust = 1, family = font, size = 3.3,
+      fontface = "bold", colour = phase_colours[headers$phase]
+    ) +
+    ggplot2::coord_cartesian(
+      xlim = c(-box_w / 2, box_w / 2), ylim = c(min(steps$ymin), 0),
+      expand = FALSE, clip = "off"
+    ) +
+    ggplot2::labs(title = "How the wells are checked and filtered", caption = plot_config$caption) +
+    theme_maps(font) +
+    ggplot2::theme(plot.title = ggplot2::element_text(margin = ggplot2::margin(b = 10)))
+
+  height <- 0.9 + abs(min(steps$ymin)) * 0.62
+  save_figure(p, file.path(plot_config$dir, "method_flowchart.png"), width = 9, height = height)
+}

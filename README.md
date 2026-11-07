@@ -65,7 +65,9 @@ wells), `sankey_scenarios.png` (the same for the criteria of each scenario),
 usable well is counted once, in the first scenario of the list it meets),
 `missing_screen_depths.png` (where screen depths are missing, per state),
 `scenario_optimisation.png` (the cells covered by the "Even coverage"
-scenario and how its thresholds were fitted)
+scenario and how its thresholds were fitted),
+`method_flowchart.png` (all checking and filtering steps in short words,
+with the thresholds from the settings)
 and one `scenario_<id>.png` per scenario.
 
 ## Depth to groundwater

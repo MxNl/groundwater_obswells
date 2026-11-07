@@ -163,6 +163,11 @@ list(
     format = "file"
   ),
   tar_target(
+    method_flowchart_plot,
+    plot_method_flowchart(well_spec, coverage_settings, plot_config, plot_font),
+    format = "file"
+  ),
+  tar_target(
     flowchart_plot,
     plot_flowchart(well_dtw, scenarios, scenario_steps, well_spec, plot_config, plot_font),
     format = "file"
