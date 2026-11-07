@@ -162,6 +162,25 @@ list(
     plot_sankey_combined(well_dtw, scenarios, scenario_wells, scenario_steps, well_spec, plot_config, plot_font),
     format = "file"
   ),
+  # Drop-out per state (prefix of the well ID)
+  tar_target(state_drop_out, state_attrition(well_dtw, scenario_wells, scenarios, well_spec)),
+  tar_target(
+    state_drop_out_plot,
+    plot_state_attrition(state_drop_out, scenarios, well_spec, plot_config, plot_font),
+    format = "file"
+  ),
+  # Diagnostic sheets: n_per_group random wells from each group (selected by
+  # a scenario, usable but not selected, not usable), per_page per page;
+  # change seed for another sample
+  tar_target(diagnostic_settings, list(n_per_group = 8, per_page = 4, seed = 1)),
+  tar_target(
+    diagnostic_plots,
+    plot_well_diagnostics(
+      well_dtw, gwl_monthly, scenario_wells, scenarios, well_spec,
+      diagnostic_settings, plot_config, plot_font
+    ),
+    format = "file"
+  ),
   tar_target(
     method_flowchart_plot,
     plot_method_flowchart(well_spec, coverage_settings, plot_config, plot_font),

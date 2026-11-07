@@ -12,7 +12,7 @@ and time series from a Microsoft SQL Server database.
    install.packages(c(
      "targets", "odbc", "pool", "duckdb", "DBI", "dplyr", "tibble", "tidyr", "keyring",
      "sf", "ggplot2", "ggridges", "patchwork", "marquee", "scales", "ragg",
-     "systemfonts", "rnaturalearthdata"
+     "systemfonts", "rnaturalearthdata", "withr"
    ))
    ```
 
@@ -67,7 +67,12 @@ usable well is counted once, in the first scenario of the list it meets),
 `scenario_optimisation.png` (the cells covered by the "Even coverage"
 scenario and how its thresholds were fitted),
 `method_flowchart.png` (all checking and filtering steps in short words,
-with the thresholds from the settings)
+with the thresholds from the settings),
+`state_attrition.png` (per state: wells lost at each step, usable wells and
+wells per scenario) and `diagnostics/wells_NN.png` (diagnostic sheets of a
+random sample of wells: monthly depths, removed spikes, mean window, mean,
+annual low and maximum depth, screen, and the result of each scenario;
+sample size and seed in `diagnostic_settings`)
 and one `scenario_<id>.png` per scenario.
 
 ## Depth to groundwater
@@ -161,7 +166,8 @@ would cover.
 
 Each scenario figure shows the selected wells on a map of Germany, their
 number with the wells left after each criterion, and the distribution of
-the four properties (usable wells in grey, selected wells in colour). The
+the four properties by depth, depth downwards (usable wells in grey,
+selected wells in colour). The
 flow chart shows the steps from the metadata to the usable wells and, per
 scenario, its four criteria with the wells left after each. The Sankey
 diagrams show the same as flows: the band is the number of wells left, the

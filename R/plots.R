@@ -171,83 +171,95 @@ plot_scenario <- function(s, points, scenario_wells, steps, germany, plot_config
     theme_maps(font) +
     ggplot2::theme(plot.margin = ggplot2::margin(12, 10, 6, 10))
 
-  # distributions of the four properties
-  long <- function(data) {
-    tidyr::pivot_longer(
-      data, dplyr::all_of(names(scenario_properties)),
-      names_to = "property", values_to = "value"
-    ) |>
-      dplyr::filter(!is.na(value)) |>
-      dplyr::mutate(property = factor(property, levels = rev(names(scenario_properties))))
+  # distributions of the four properties, depth downwards on the y axis and
+  # one column per property. Densities computed on the visible range only
+  # (0 to depth_max): over the whole range of all wells (deep wells reach
+  # > 100 m) the curves would get edgy. Each curve scaled to its own maximum.
+  depth_max <- plot_config$distribution_max_m
+  props <- names(scenario_properties)
+  half_width <- 0.44
+  density_shape <- function(values, column, which) {
+    values <- values[!is.na(values)]
+    if (length(values) < 3) {
+      return(NULL)
+    }
+    d <- stats::density(values, bw = 0.3, from = 0, to = depth_max, n = 512)
+    width <- d$y / max(d$y) * 2 * half_width * 0.95
+    base <- column - half_width
+    tibble::tibble(
+      group = paste(which, column),
+      layer = which,
+      x = c(base, base + width, base),
+      y = c(0, d$x, depth_max)
+    )
   }
-  all_long <- long(usable)
-  sel_long <- long(dplyr::filter(usable, selected))
-  # densities need some wells per property
-  sel_dens <- dplyr::filter(sel_long, dplyr::n() >= 3, .by = property)
-  ranges <- dplyr::filter(scenario_ranges(s), !is.na(from))
-  x_max <- plot_config$distribution_max_m
+  shapes <- dplyr::bind_rows(lapply(seq_along(props), function(i) {
+    dplyr::bind_rows(
+      density_shape(usable[[props[i]]], i, "usable"),
+      density_shape(usable[[props[i]]][usable$selected], i, "selected")
+    )
+  }))
+  ticks <- dplyr::bind_rows(lapply(seq_along(props), function(i) {
+    v <- usable[[props[i]]][usable$selected]
+    v <- v[!is.na(v) & v <= depth_max]
+    tibble::tibble(column = rep(i, length(v)), y = v)
+  }))
+  ranges <- scenario_ranges(s) |>
+    dplyr::mutate(column = match(as.character(property), props)) |>
+    dplyr::filter(!is.na(from))
+  edges <- tidyr::pivot_longer(ranges, c(from, to), values_to = "y") |>
+    dplyr::filter(y > 0, y < depth_max)
 
-  ridges <- ggplot2::ggplot(all_long, ggplot2::aes(value, property)) +
+  ridges <- ggplot2::ggplot() +
     ggplot2::geom_rect(
       ggplot2::aes(
-        xmin = from, xmax = pmin(to, x_max), ymin = as.numeric(property),
-        ymax = as.numeric(property) + 0.92
+        xmin = column - half_width, xmax = column + half_width,
+        ymin = from, ymax = pmin(to, depth_max)
       ),
-      data = ranges, inherit.aes = FALSE,
-      fill = colour, alpha = 0.18
+      data = ranges, fill = colour, alpha = 0.18
     ) +
-    # densities on the visible range only (from, to): computed over the whole
-    # range of all wells (deep wells reach > 100 m), the 512 points of the
-    # density would be spread over that range and the curve edgy here
-    ggridges::geom_density_ridges(
-      ggplot2::aes(height = ggplot2::after_stat(ndensity)),
-      stat = "density_ridges", scale = 0.9, fill = "grey75", colour = "grey55",
-      alpha = 0.45, linewidth = 0.3, rel_min_height = 0.002, bandwidth = 0.3,
-      from = 0, to = x_max
+    ggplot2::geom_polygon(
+      ggplot2::aes(x, y, group = group),
+      data = dplyr::filter(shapes, layer == "usable"),
+      fill = "grey75", colour = "grey55", alpha = 0.45, linewidth = 0.3
     ) +
-    ggridges::geom_density_ridges(
-      ggplot2::aes(height = ggplot2::after_stat(ndensity)),
-      data = sel_dens, stat = "density_ridges", scale = 0.9,
-      fill = colour, colour = "white", alpha = 0.75,
-      linewidth = 0.4, rel_min_height = 0.002, bandwidth = 0.3,
-      from = 0, to = x_max
+    ggplot2::geom_polygon(
+      ggplot2::aes(x, y, group = group),
+      data = dplyr::filter(shapes, layer == "selected"),
+      fill = colour, colour = "white", alpha = 0.75, linewidth = 0.4
     ) +
     # edges of the allowed range, visible above the curves
     ggplot2::geom_segment(
-      ggplot2::aes(x = x, xend = x, y = y, yend = y + 0.92),
-      data = tidyr::pivot_longer(
-        dplyr::mutate(ranges, y = as.numeric(property)),
-        c(from, to), values_to = "x"
-      ) |>
-        dplyr::filter(x > 0, x < x_max),
-      inherit.aes = FALSE, colour = colour, linewidth = 0.4, linetype = "22"
+      ggplot2::aes(x = column - half_width, xend = column + half_width, y = y, yend = y),
+      data = edges, colour = colour, linewidth = 0.4, linetype = "22"
     ) +
-    # the selected wells as ticks below their ridge
-    ggplot2::geom_point(
-      ggplot2::aes(value, as.numeric(property) - 0.06),
-      data = sel_long, shape = "|", size = 1.6, colour = colour, alpha = 0.5
+    # the selected wells as ticks left of their curve
+    ggplot2::geom_segment(
+      ggplot2::aes(x = column - half_width - 0.06, xend = column - half_width - 0.01, y = y, yend = y),
+      data = ticks, colour = colour, alpha = 0.5, linewidth = 0.3
     ) +
     ggplot2::scale_x_continuous(
-      breaks = seq(0, x_max, 4), expand = ggplot2::expansion(0),
-      labels = function(x) paste(x, "m")
+      breaks = seq_along(props), labels = unname(scenario_properties),
+      position = "top", expand = ggplot2::expansion(add = 0.08)
     ) +
-    ggplot2::scale_y_discrete(
-      labels = scenario_properties, expand = ggplot2::expansion(add = c(0.25, 1))
+    ggplot2::scale_y_reverse(
+      breaks = seq(0, depth_max, 2), labels = function(y) paste(y, "m"),
+      expand = ggplot2::expansion(0)
     ) +
-    ggplot2::coord_cartesian(xlim = c(0, x_max)) +
-    ggplot2::labs(x = "m below ground surface", y = NULL) +
+    ggplot2::coord_cartesian(ylim = c(depth_max, 0)) +
+    ggplot2::labs(x = NULL, y = "m below ground surface (screen length: m)") +
     theme_charts(font, base_size = 12) +
     ggplot2::theme(
-      panel.grid.major.y = ggplot2::element_blank(),
-      axis.text.y = ggplot2::element_text(vjust = 0, hjust = 1, lineheight = 1.05),
-      axis.title.x = ggplot2::element_text(colour = "grey35", size = ggplot2::rel(0.85), margin = ggplot2::margin(t = 6)),
+      panel.grid.major.x = ggplot2::element_blank(),
+      axis.text.x.top = ggplot2::element_text(lineheight = 1.05, vjust = 0, colour = "grey20"),
+      axis.title.y = ggplot2::element_text(colour = "grey35", size = ggplot2::rel(0.85), margin = ggplot2::margin(r = 6)),
       plot.margin = ggplot2::margin(4, 10, 0, 10)
     )
 
   subtitle <- paste0(
     s$purpose, " Map: the ", colour_word("selected wells", colour),
     " among all usable wells (grey). Right: wells left after each criterion ",
-    "and the distribution of the four properties (grey: usable wells; ",
+    "and the distribution of the four properties by depth (grey: usable wells; ",
     "shaded: allowed range, for the screen top the range the mean depth and ",
     "the screen rule allow together)."
   )
