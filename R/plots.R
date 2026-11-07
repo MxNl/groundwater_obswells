@@ -722,13 +722,6 @@ germany_grid <- function(germany, cell_m) {
   grid
 }
 
-optimised_threshold_labels <- c(
-  dtw_mean_max = "Limit of the mean depth (m)",
-  dtw_max_extra = "Maximum depth: limit + ... (m)",
-  top_below_max = "Screen top: up to ... m\nbelow the water table",
-  screen_length_max = "Screen length up to ... (m)"
-)
-
 # The even coverage scenario: map of the cells with usable wells, covered or
 # not by the selected wells, and for each of the four thresholds the covered
 # cells along its grid, the other thresholds at the chosen values.
@@ -774,30 +767,67 @@ plot_coverage_optimisation <- function(optimisation, germany, plot_config,
     theme_maps(font) +
     ggplot2::theme(plot.margin = ggplot2::margin(0, 5, 0, 0))
 
+  # one panel per threshold: what is varied, in words, with explicit limits
   target <- optimisation$keep_share * optimisation$cells_ref
-  profiles <- optimisation$profiles |>
-    dplyr::mutate(threshold = factor(
-      optimised_threshold_labels[threshold], levels = optimised_threshold_labels
-    ))
-  chosen <- dplyr::filter(profiles, chosen)
-  curves <- ggplot2::ggplot(profiles, ggplot2::aes(value, cells)) +
-    ggplot2::geom_hline(yintercept = target, colour = "grey60", linewidth = 0.3, linetype = "22") +
-    ggplot2::geom_line(colour = "grey55", linewidth = 0.6) +
-    ggplot2::geom_point(colour = "grey55", size = 1.1) +
-    ggplot2::geom_point(data = chosen, colour = s$colour, size = 2.6) +
-    ggplot2::geom_text(
-      ggplot2::aes(label = value),
-      data = chosen, vjust = -1, family = font, size = 3.3, colour = s$colour, fontface = "bold"
-    ) +
-    ggplot2::facet_wrap(ggplot2::vars(threshold), scales = "free_x", ncol = 2) +
-    ggplot2::scale_y_continuous(limits = c(0, NA), expand = ggplot2::expansion(c(0, 0.2))) +
-    ggplot2::labs(x = NULL, y = paste0("Covered ", optimisation$cell_km, " km cells")) +
-    theme_charts(font, base_size = 11) +
-    ggplot2::theme(
-      strip.text = ggplot2::element_text(face = "bold", hjust = 0, lineheight = 1),
-      panel.spacing = grid::unit(1, "lines"),
-      plot.margin = ggplot2::margin(10, 10, 0, 10)
+  chosen_all <- dplyr::filter(optimisation$profiles, chosen)
+  limit <- chosen_all$value[chosen_all$threshold == "dtw_mean_max"]
+  num <- function(x) format(x, decimal.mark = ".", trim = TRUE)
+  panel_spec <- list(
+    dtw_mean_max = list(
+      title = "Mean depth to groundwater:\nupper limit",
+      axis = function(x) paste0(num(x), " m"),
+      chosen = function(v) paste0("mean depth \u2264 ", num(v), " m")
+    ),
+    dtw_max_extra = list(
+      title = "Maximum depth to groundwater:\nmargin above the mean-depth limit",
+      axis = function(x) paste0("+", num(x), " m"),
+      chosen = function(v) paste0("maximum depth < ", num(limit + v), " m\n(= ", num(limit), " + ", num(v), " m)")
+    ),
+    top_below_max = list(
+      title = "Screen top: how deep below\nthe mean water table at most",
+      axis = function(x) paste0("0\u2013", num(x), " m"),
+      chosen = function(v) paste0("screen top 0\u2013", num(v), " m\nbelow the water table")
+    ),
+    screen_length_max = list(
+      title = "Screen length:\nupper limit",
+      axis = function(x) paste0("\u2264 ", num(x), " m"),
+      chosen = function(v) paste0("screen length \u2264 ", num(v), " m")
     )
+  )
+  y_max <- max(optimisation$profiles$cells) * 1.08
+  curves_label <- paste0("Covered ", optimisation$cell_km, " km cells")
+  panels <- lapply(names(panel_spec), function(name) {
+    spec <- panel_spec[[name]]
+    prof <- dplyr::filter(optimisation$profiles, threshold == name)
+    pick <- dplyr::filter(prof, chosen)
+    ggplot2::ggplot(prof, ggplot2::aes(value, cells)) +
+      ggplot2::geom_hline(yintercept = target, colour = "grey60", linewidth = 0.3, linetype = "22") +
+      ggplot2::geom_line(colour = "grey55", linewidth = 0.6) +
+      ggplot2::geom_point(colour = "grey55", size = 1.1) +
+      ggplot2::geom_point(data = pick, colour = s$colour, size = 2.6) +
+      ggplot2::scale_x_continuous(
+        breaks = if (name == "dtw_mean_max") seq(0, max(prof$value), 2) else unique(prof$value),
+        labels = spec$axis
+      ) +
+      ggplot2::scale_y_continuous(limits = c(0, y_max), expand = ggplot2::expansion(0)) +
+      ggplot2::labs(
+        title = spec$title,
+        subtitle = paste0("Chosen: ", spec$chosen(pick$value), ", ", pick$cells, " cells"),
+        x = NULL,
+        y = if (name %in% c("dtw_mean_max", "top_below_max")) curves_label else NULL
+      ) +
+      theme_charts(font, base_size = 10) +
+      ggplot2::theme(
+        plot.title = ggplot2::element_text(face = "bold", size = ggplot2::rel(1), hjust = 0, lineheight = 1),
+        plot.subtitle = ggplot2::element_text(
+          colour = s$colour, face = "bold", size = ggplot2::rel(0.85), hjust = 0,
+          lineheight = 1, margin = ggplot2::margin(t = 2, b = 4)
+        ),
+        plot.margin = ggplot2::margin(4, 8, 4, 8),
+        panel.grid.minor = ggplot2::element_blank()
+      )
+  })
+  curves <- patchwork::wrap_elements(full = patchwork::wrap_plots(panels, ncol = 2))
 
   figure <- patchwork::wrap_elements(full = map) + curves +
     patchwork::plot_layout(widths = c(1, 1.15)) +
@@ -813,7 +843,7 @@ plot_coverage_optimisation <- function(optimisation, germany, plot_config,
         " cells) or without any usable well (light grey, ", nrow(grid) - n_with_usable,
         " cells, no threshold can cover them). Right: the strictest thresholds that keep ",
         100 * optimisation$keep_share, " % of the cells the loosest ones cover ",
-        "(dashed line); each panel varies one threshold, the others at the chosen values."
+        "(dashed line); each panel varies one threshold, the others stay at the chosen values."
       ),
       caption = plot_config$caption,
       theme = theme_maps(font) +
