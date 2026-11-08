@@ -72,7 +72,21 @@ with the thresholds from the settings),
 wells per scenario) and `diagnostics/wells_NN.png` (diagnostic sheets of a
 random sample of wells: monthly depths, removed spikes, mean window, mean,
 annual low and maximum depth, screen, and the result of each scenario;
-sample size and seed in `diagnostic_settings`)
+sample size and seed in `diagnostic_settings`).
+
+`plots/thresholds/` helps to choose the preprocessing settings from the
+data (ranges in `threshold_settings`):
+
+- `recent_window.png`: usable wells for each recent window (3-20 years) and
+  minimum number of years with data per season, and how many wells have
+  data within the last N years
+- `mean_window.png`: how much the mean level changes with the number of most
+  recent years behind it, and how many wells have that many years
+- `spikes.png`: share of monthly means removed and wells affected for each
+  factor of the MAD and minimum deviation
+- `valid_ranges.png`: the implied depth of all measurements with the
+  plausibility limits, and the level values found identically in several
+  wells (error codes such as -999 or 0 stand out there)
 and one `scenario_<id>.png` per scenario.
 
 ## Depth to groundwater
