@@ -208,6 +208,25 @@ hand, or copy the unpacked shapefile (`ne_10m_admin_1_states_provinces.*`)
 from another project's cache; until then the maps show the country outline
 from rnaturalearthdata.
 
+## When the data are read again
+
+The database changes outside the pipeline, so on every run it reads the
+catalogue (row counts of the tables) and checksums of the metadata columns
+used. The queries rerun when:
+
+- rows are added or deleted (row counts),
+- values in the metadata change (checksum over well ID, ground elevation,
+  screen depths and coordinates): the metadata query reruns; if a ground
+  elevation changed, the level queries too, as they check the depth below
+  ground,
+- the settings they use change (`query_spec`, `threshold_query_settings`),
+- a new month starts, as the recent window moves on (fix it with
+  `reference_date` in `well_config`).
+
+Corrected levels in `tbl_gwl_raw` with the same number of rows are read at
+the next new month at the latest; to read them at once, run
+`targets::tar_invalidate(starts_with("gwl_"))` before `tar_make()`.
+
 ## How it works
 
 `R/db.R` connects through ODBC with a connection pool (pool package), so all

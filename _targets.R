@@ -66,8 +66,15 @@ list(
     )
   ),
   tar_target(well_spec, resolve_well_spec(well_config, db_columns, db_tables)),
-  tar_target(well_meta, fetch_well_meta(well_spec)),
-  tar_target(gwl_monthly, fetch_gwl_monthly(well_spec)),
+  # checksums of the metadata columns used, on every run (the metadata table
+  # is small): changed values (e.g. screen depths filled in) rerun the
+  # metadata query, changed ground elevations also the level queries
+  tar_target(meta_checksums, fetch_meta_checksums(well_spec), cue = tar_cue(mode = "always")),
+  # only the settings the server queries use: a change of other settings
+  # (spikes, years per season, scenarios, plots) does not rerun them
+  tar_target(query_spec, server_query_spec(well_spec, meta_checksums$elev_gs)),
+  tar_target(well_meta, fetch_well_meta(query_spec, meta_checksums$all)),
+  tar_target(gwl_monthly, fetch_gwl_monthly(query_spec)),
   tar_target(gwl_stats, summarise_gwl_monthly(gwl_monthly, well_spec)),
   tar_target(well_dtw, assess_well_dtw(well_meta, gwl_stats, well_spec)),
   tar_target(well_availability, summarise_well_availability(well_dtw, well_spec)),
@@ -197,10 +204,15 @@ list(
       candidate_codes = c(0, -1, -9, -99, -999, -9999, 99, 999, 9999)
     )
   ),
-  tar_target(gwl_year_seasons, fetch_year_seasons(well_spec, threshold_settings)),
-  tar_target(gwl_depth_histogram, fetch_depth_histogram(well_spec)),
-  tar_target(gwl_candidate_codes, fetch_candidate_codes(well_spec, threshold_settings)),
-  tar_target(gwl_removed_values, fetch_removed_values(well_spec, threshold_settings)),
+  # the threshold settings the server queries use, likewise
+  tar_target(
+    threshold_query_settings,
+    threshold_settings[c("history_years", "candidate_codes", "top_values")]
+  ),
+  tar_target(gwl_year_seasons, fetch_year_seasons(query_spec, threshold_query_settings)),
+  tar_target(gwl_depth_histogram, fetch_depth_histogram(query_spec)),
+  tar_target(gwl_candidate_codes, fetch_candidate_codes(query_spec, threshold_query_settings)),
+  tar_target(gwl_removed_values, fetch_removed_values(query_spec, threshold_query_settings)),
   tar_target(
     threshold_plots,
     plot_threshold_checks(

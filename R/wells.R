@@ -126,8 +126,53 @@ find_coordinate_column <- function(columns, axis) {
   if (length(hit) == 0) NULL else hit[1]
 }
 
-# The metadata columns needed, one row per metadata record.
-fetch_well_meta <- function(spec) {
+# The part of the spec the server queries use: tables, columns, the checks
+# of single measurements, the recent window (and the month it ends with) and
+# the tables' row counts, so the queries rerun when the data change, but not
+# when settings used only locally change.
+server_query_spec <- function(spec, elev_gs_checksum = NULL) {
+  out <- spec[c(
+    "meta_schema", "meta_table", "meta_id", "elev_gs", "screen_top", "screen_bot", "x", "y",
+    "gwl_schema", "gwl_table", "gwl_id", "gwl_date", "gwl_level",
+    "gwl_valid_range", "dtw_valid_range", "reference_month", "recent_years",
+    "meta_n_rows", "gwl_n_rows"
+  )]
+  # the level queries check the depth below ground, so they rerun when a
+  # ground elevation changes
+  out$elev_gs_checksum <- elev_gs_checksum
+  out
+}
+
+# Checksums of the metadata columns used, to notice changed values (the row
+# count only shows added or deleted rows): `all` over well ID, ground
+# elevation, screen top and bottom and coordinates, `elev_gs` over well ID
+# and ground elevation only. Cheap: the metadata table is small.
+meta_checksums_sql <- function(spec) {
+  cols <- vapply(
+    c(spec$meta_id, spec$elev_gs, spec$screen_top, spec$screen_bot, spec$x, spec$y),
+    sql_ident, character(1)
+  )
+  sprintf(
+    "SELECT COUNT_BIG(*) AS n,
+       CHECKSUM_AGG(BINARY_CHECKSUM(%s)) AS checksum_all,
+       CHECKSUM_AGG(BINARY_CHECKSUM(%s, %s)) AS checksum_elev_gs
+FROM %s.%s",
+    paste(cols, collapse = ", "), cols[1], cols[2],
+    sql_ident(spec$meta_schema), sql_ident(spec$meta_table)
+  )
+}
+
+fetch_meta_checksums <- function(spec) {
+  res <- db_query(meta_checksums_sql(spec))
+  list(
+    all = paste(res$n, res$checksum_all),
+    elev_gs = paste(res$n, res$checksum_elev_gs)
+  )
+}
+
+# The metadata columns needed, one row per metadata record. `checksums` is
+# not used here: it only makes the target rerun when the metadata change.
+fetch_well_meta <- function(spec, checksums = NULL) {
   sql <- sprintf(
     "SELECT CAST(%s AS nvarchar(100)) AS well_id,
             CAST(%s AS float) AS elev_gs,
@@ -230,6 +275,17 @@ WHERE (n_valid > 0 AND month_index > %14$d - 12 * %15$d)
 # gwl_monthly_sql(). About one row per well and month in the window.
 fetch_gwl_monthly <- function(spec) {
   db_query(gwl_monthly_sql(spec))
+}
+
+# In-memory DuckDB. Newer duckdb versions ask where to keep extensions; none
+# are used here, so the temporary directory is fine and the message is not
+# needed.
+duckdb_driver <- function() {
+  if ("shared_home" %in% names(formals(duckdb::duckdb))) {
+    duckdb::duckdb(shared_home = FALSE)
+  } else {
+    duckdb::duckdb()
+  }
 }
 
 month_date <- function(month_index) {
@@ -409,7 +465,7 @@ ORDER BY well_id",
 }
 
 summarise_gwl_monthly <- function(monthly, spec) {
-  con <- DBI::dbConnect(duckdb::duckdb())
+  con <- DBI::dbConnect(duckdb_driver())
   on.exit(DBI::dbDisconnect(con, shutdown = TRUE), add = TRUE)
   duckdb::duckdb_register(con, "monthly", monthly)
   DBI::dbGetQuery(con, gwl_window_stats_sql(spec)) |>
