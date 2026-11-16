@@ -54,6 +54,9 @@ list(
       reference_date = NULL,
       spike_mad = 5,
       spike_min_dev = 1,
+      # TRUE: a spike must also lie that far from both neighbouring months,
+      # so real events lasting some months (wet winters, droughts) stay
+      spike_neighbours = TRUE,
       # usable: each season (DJF, MAM, JJA, SON) has data in at least this
       # many years of the recent window
       min_years_per_season = 5,
@@ -183,23 +186,25 @@ list(
   ),
   # Figures for choosing the thresholds (plots/thresholds/): the recent window
   # and years per season over history_years, the years for the mean, the
-  # spike rule for each factor and minimum deviation, the plausibility limits
-  # and the top_values most frequent level values (error codes)
+  # spike rule for each factor and minimum deviation, the plausibility limits,
+  # the candidate_codes (error codes) and the top_values removed values
   tar_target(
     threshold_settings,
     list(
       history_years = 30, recent_years = 3:20,
       spike_mad = c(3, 4, 5, 6, 8, 10), spike_min_dev = c(0.5, 1, 2),
-      top_values = 25
+      top_values = 15,
+      candidate_codes = c(0, -1, -9, -99, -999, -9999, 99, 999, 9999)
     )
   ),
   tar_target(gwl_year_seasons, fetch_year_seasons(well_spec, threshold_settings)),
   tar_target(gwl_depth_histogram, fetch_depth_histogram(well_spec)),
-  tar_target(gwl_frequent_values, fetch_frequent_values(well_spec, threshold_settings)),
+  tar_target(gwl_candidate_codes, fetch_candidate_codes(well_spec, threshold_settings)),
+  tar_target(gwl_removed_values, fetch_removed_values(well_spec, threshold_settings)),
   tar_target(
     threshold_plots,
     plot_threshold_checks(
-      gwl_year_seasons, gwl_depth_histogram, gwl_frequent_values, gwl_monthly,
+      gwl_year_seasons, gwl_depth_histogram, gwl_candidate_codes, gwl_removed_values, gwl_monthly,
       well_dtw, well_spec, threshold_settings, plot_config, plot_font
     ),
     format = "file"

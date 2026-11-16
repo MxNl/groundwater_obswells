@@ -52,9 +52,27 @@ scenario_results <- function(well_id, scenario_wells, scenarios) {
   paste(res, collapse = " | ")
 }
 
+# Spikes among the monthly means of one well (in time order), the same rule
+# as the DuckDB statistics: further than max(k * MAD, min_dev) from the
+# median and, with neighbours, also from both neighbouring months.
+mark_spikes <- function(gwl, k, min_dev, neighbours = TRUE) {
+  n <- length(gwl)
+  if (n < 3) {
+    return(rep(FALSE, n))
+  }
+  med <- stats::median(gwl)
+  threshold <- max(k * 1.4826 * stats::median(abs(gwl - med)), min_dev)
+  spike <- abs(gwl - med) > threshold
+  if (neighbours) {
+    dev_prev <- abs(gwl - c(NA, gwl[-n]))
+    dev_next <- abs(gwl - c(gwl[-1], NA))
+    spike <- spike & (is.na(dev_prev) | dev_prev > threshold) & (is.na(dev_next) | dev_next > threshold)
+  }
+  spike
+}
+
 # Monthly depths of one well in the recent window, with the spikes marked as
-# by the DuckDB statistics (median and MAD of the monthly means) and the
-# years used for the mean.
+# by the DuckDB statistics and the years used for the mean.
 diagnostic_series <- function(monthly, well, spec) {
   start <- spec$reference_month - 12 * spec$recent_years
   d <- monthly[monthly$well_id == well$well_id & !is.na(monthly$month_index) & !is.na(monthly$gwl), ]
@@ -62,9 +80,8 @@ diagnostic_series <- function(monthly, well, spec) {
   if (nrow(d) == 0) {
     return(NULL)
   }
-  med <- stats::median(d$gwl)
-  mad <- 1.4826 * stats::median(abs(d$gwl - med))
-  d$spike <- nrow(d) >= 3 & abs(d$gwl - med) > max(spec$spike_mad * mad, spec$spike_min_dev)
+  d <- d[order(d$month_index), ]
+  d$spike <- mark_spikes(d$gwl, spec$spike_mad, spec$spike_min_dev, spec$spike_neighbours %||% TRUE)
   d$year <- d$month_index %/% 12
   years <- sort(unique(d$year[!d$spike]), decreasing = TRUE)
   d$mean_window <- d$year %in% utils::head(years, spec$window_years)

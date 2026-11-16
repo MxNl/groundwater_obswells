@@ -3,7 +3,8 @@
 # How the number of usable wells and the results depend on the settings of
 # the preprocessing, to choose them from the data: the recent window and the
 # years per season, the years behind the mean, the spike rule, and the
-# plausibility limits and error codes. Written to plots/thresholds/.
+# plausibility limits and error codes (a list of candidate codes and the
+# values among the removed measurements). Written to plots/thresholds/.
 
 # The measurements with their checks, as in gwl_monthly_sql(): "gs" (ground
 # elevation per well) and "checked" (well_id, obs_date, gwl, elev_gs,
@@ -83,29 +84,51 @@ GROUP BY depth_bin"
   )
 }
 
-# The level values that occur in the most wells: error codes such as -999
-# or 0 occur identically in many wells, real levels rarely.
-frequent_values_sql <- function(spec, settings) {
+fetch_year_seasons <- function(spec, settings) db_query(year_seasons_sql(spec, settings))
+fetch_depth_histogram <- function(spec) db_query(depth_histogram_sql(spec))
+# Candidate error codes: how often each value of settings$candidate_codes
+# occurs as a level, and in how many wells. All candidates are listed, also
+# those that do not occur.
+candidate_codes_sql <- function(spec, settings) {
+  codes <- paste(sql_number(settings$candidate_codes), collapse = ", ")
   sprintf(
-    "SELECT TOP (%1$d) value, n, n_wells
-FROM (
-  SELECT CAST(%2$s AS float) AS value,
-         COUNT_BIG(*) AS n,
-         COUNT(DISTINCT CAST(%3$s AS nvarchar(100))) AS n_wells
-  FROM %4$s.%5$s
-  WHERE %2$s IS NOT NULL
-  GROUP BY CAST(%2$s AS float)
-) AS v
-ORDER BY n_wells DESC, n DESC",
-    as.integer(settings$top_values),
+    "SELECT CAST(%1$s AS float) AS value,
+       COUNT_BIG(*) AS n,
+       COUNT(DISTINCT CAST(%2$s AS nvarchar(100))) AS n_wells
+FROM %3$s.%4$s
+WHERE CAST(%1$s AS float) IN (%5$s)
+GROUP BY CAST(%1$s AS float)",
     sql_ident(spec$gwl_level), sql_ident(spec$gwl_id),
-    sql_ident(spec$gwl_schema), sql_ident(spec$gwl_table)
+    sql_ident(spec$gwl_schema), sql_ident(spec$gwl_table), codes
   )
 }
 
-fetch_year_seasons <- function(spec, settings) db_query(year_seasons_sql(spec, settings))
-fetch_depth_histogram <- function(spec) db_query(depth_histogram_sql(spec))
-fetch_frequent_values <- function(spec, settings) db_query(frequent_values_sql(spec, settings))
+# The values among the removed measurements (outside the valid range or an
+# implausible depth) that occur in the most wells.
+removed_values_sql <- function(spec, settings) {
+  paste0(
+    checked_measurements_cte(spec),
+    sprintf("
+SELECT TOP (%d) value, n, n_wells, check_code
+FROM (
+  SELECT gwl AS value, check_code,
+         COUNT_BIG(*) AS n,
+         COUNT(DISTINCT well_id) AS n_wells
+  FROM checked
+  WHERE check_code IN (2, 3)
+  GROUP BY gwl, check_code
+) AS v
+ORDER BY n_wells DESC, n DESC", as.integer(settings$top_values))
+  )
+}
+
+fetch_candidate_codes <- function(spec, settings) {
+  found <- db_query(candidate_codes_sql(spec, settings))
+  tibble::tibble(value = settings$candidate_codes) |>
+    dplyr::left_join(found, by = "value") |>
+    dplyr::mutate(n = dplyr::coalesce(n, 0), n_wells = dplyr::coalesce(n_wells, 0))
+}
+fetch_removed_values <- function(spec, settings) db_query(removed_values_sql(spec, settings))
 
 # Calculations ------------------------------------------------------------------------
 
@@ -184,23 +207,35 @@ mean_window_change <- function(monthly, spec) {
 }
 
 # Share of monthly means removed as spikes and wells affected, for each
-# factor of the MAD and each minimum deviation.
+# factor of the MAD and each minimum deviation, with and without the
+# neighbour condition.
 spike_sensitivity <- function(monthly, spec, settings) {
   start <- spec$reference_month - 12 * spec$recent_years
   m <- monthly |>
     dplyr::filter(!is.na(month_index), !is.na(gwl), month_index > start, month_index <= spec$reference_month) |>
+    dplyr::arrange(well_id, month_index) |>
     dplyr::mutate(
       med = stats::median(gwl),
       n_months = dplyr::n(),
+      dev_prev = abs(gwl - dplyr::lag(gwl)),
+      dev_next = abs(gwl - dplyr::lead(gwl)),
       .by = well_id
     ) |>
     dplyr::mutate(dev = abs(gwl - med)) |>
     dplyr::mutate(mad = 1.4826 * stats::median(dev), .by = well_id)
-  grid <- expand.grid(spike_mad = settings$spike_mad, spike_min_dev = settings$spike_min_dev)
+  grid <- expand.grid(
+    spike_mad = settings$spike_mad, spike_min_dev = settings$spike_min_dev,
+    neighbours = c(TRUE, FALSE)
+  )
   grid$share_removed <- NA_real_
   grid$wells_affected <- NA_real_
   for (i in seq_len(nrow(grid))) {
-    spike <- m$n_months >= 3 & m$dev > pmax(grid$spike_mad[i] * m$mad, grid$spike_min_dev[i])
+    threshold <- pmax(grid$spike_mad[i] * m$mad, grid$spike_min_dev[i])
+    spike <- m$n_months >= 3 & m$dev > threshold
+    if (grid$neighbours[i]) {
+      spike <- spike & (is.na(m$dev_prev) | m$dev_prev > threshold) &
+        (is.na(m$dev_next) | m$dev_next > threshold)
+    }
     grid$share_removed[i] <- mean(spike)
     grid$wells_affected[i] <- length(unique(m$well_id[spike]))
   }
@@ -319,22 +354,36 @@ plot_mean_window <- function(change, spec, plot_config, font) {
 
 plot_spike_sensitivity <- function(spikes, spec, plot_config, font) {
   colour <- "#E4572E"
-  spikes$min_dev <- factor(paste0("at least ", spikes$spike_min_dev, " m"))
-  current <- dplyr::filter(spikes, spike_mad == spec$spike_mad, spike_min_dev == spec$spike_min_dev)
+  rule_colours <- c("median only" = "grey60", "median and both neighbours" = "#2E86AB")
+  neighbours_now <- isTRUE(spec$spike_neighbours %||% TRUE)
+  spikes <- spikes |>
+    dplyr::mutate(
+      min_dev = factor(paste0("at least ", spike_min_dev, " m")),
+      rule = factor(
+        ifelse(neighbours, "median and both neighbours", "median only"),
+        levels = names(rule_colours)
+      ),
+      line = interaction(rule, min_dev)
+    )
+  current <- dplyr::filter(
+    spikes, spike_mad == spec$spike_mad, spike_min_dev == spec$spike_min_dev,
+    neighbours == neighbours_now
+  )
   base <- function(y, title, label_fun) {
     d <- dplyr::mutate(spikes, value = .subset2(spikes, y))
     d_current <- dplyr::mutate(current, value = .subset2(current, y))
-    ggplot2::ggplot(d, ggplot2::aes(spike_mad, value, linetype = min_dev)) +
-      ggplot2::geom_line(colour = "grey35", linewidth = 0.6) +
-      ggplot2::geom_point(colour = "grey35", size = 1.2) +
+    ggplot2::ggplot(d, ggplot2::aes(spike_mad, value, colour = rule, linetype = min_dev, group = line)) +
+      ggplot2::geom_line(linewidth = 0.6) +
+      ggplot2::geom_point(size = 1.2) +
       ggplot2::geom_point(data = d_current, colour = colour, size = 3) +
+      ggplot2::scale_colour_manual(values = rule_colours, name = "Spike if far from") +
       ggplot2::scale_x_continuous(breaks = unique(spikes$spike_mad), labels = function(x) paste0(x, " \u00d7")) +
       ggplot2::scale_y_continuous(labels = label_fun, limits = c(0, NA)) +
       ggplot2::scale_linetype_discrete(name = "Minimum deviation") +
       ggplot2::labs(title = title, x = "Factor of the MAD", y = NULL) +
       theme_charts(font, base_size = 10) +
       ggplot2::theme(
-        legend.position = "bottom", legend.justification = "left",
+        legend.position = "bottom", legend.justification = "left", legend.box = "vertical",
         plot.title = ggplot2::element_text(face = "bold", size = ggplot2::rel(1.05), hjust = 0)
       )
   }
@@ -342,24 +391,28 @@ plot_spike_sensitivity <- function(spikes, spec, plot_config, font) {
     base("share_removed", "Monthly means removed", scales::label_percent()),
     base("wells_affected", "Wells with at least one removed month", label_n),
     guides = "collect"
-  ) & ggplot2::theme(legend.position = "bottom")
+  ) & ggplot2::theme(legend.position = "bottom", legend.box = "vertical")
   figure <- figure +
     patchwork::plot_annotation(
       title = "How strict should the spike rule be?",
       subtitle = paste0(
-        "Monthly means further than factor \u00d7 MAD (and at least the minimum ",
-        "deviation) from the well's median in the recent window are removed. ",
-        "A steep rise to smaller factors means real variation gets removed. ",
-        "The ", colour_word("current setting", colour), ": ", spec$spike_mad,
-        " \u00d7 MAD, at least ", spec$spike_min_dev, " m."
+        "A monthly mean is removed if it lies further than factor \u00d7 MAD (and at least ",
+        "the minimum deviation) from the well's median in the recent window; with the ",
+        "neighbour condition (blue) only if it lies that far from both neighbouring ",
+        "months too, so real events lasting some months stay. The ",
+        colour_word("current setting", colour), ": ", spec$spike_mad,
+        " \u00d7 MAD, at least ", spec$spike_min_dev, " m, ",
+        if (neighbours_now) "with" else "without", " the neighbour condition."
       ),
       caption = plot_config$caption,
-      theme = theme_maps(font)
+      # the collected legend below the charts (the annotation theme sets it)
+      theme = theme_maps(font) +
+        ggplot2::theme(legend.position = "bottom", legend.box = "vertical", legend.justification = "left")
     )
-  save_figure(figure, file.path(threshold_dir(plot_config), "spikes.png"), width = figure_width, height = 6)
+  save_figure(figure, file.path(threshold_dir(plot_config), "spikes.png"), width = figure_width, height = 6.5)
 }
 
-plot_valid_ranges <- function(depth_hist, frequent, spec, plot_config, font) {
+plot_valid_ranges <- function(depth_hist, codes, removed, spec, plot_config, font) {
   colour <- "#E4572E"
   limits <- spec$dtw_valid_range
   hist <- ggplot2::ggplot(depth_hist) +
@@ -384,27 +437,52 @@ plot_valid_ranges <- function(depth_hist, frequent, spec, plot_config, font) {
     ggplot2::theme(plot.title = ggplot2::element_text(face = "bold", size = ggplot2::rel(1.05), hjust = 0))
 
   # values in a single well are no codes, only repeated readings
-  frequent <- frequent |>
+  value_text <- function(x) sub("^-", "\u2212", format(round(x, 2), trim = TRUE, drop0trailing = TRUE))
+  # candidate codes: kept as levels (inside the valid range, grey) or removed (red)
+  codes <- codes |>
+    dplyr::mutate(
+      removed = value < spec$gwl_valid_range[1] | value > spec$gwl_valid_range[2],
+      label = factor(value_text(value), levels = rev(value_text(value)))
+    )
+  code_bars <- ggplot2::ggplot(codes, ggplot2::aes(n_wells, label, fill = removed)) +
+    ggplot2::geom_col(width = 0.7) +
+    ggplot2::geom_text(
+      ggplot2::aes(label = ifelse(
+        n == 0, "not found",
+        paste0(label_n(n_wells), " wells, ", label_n(n), " values", ifelse(removed, "", " \u2013 kept!"))
+      )),
+      hjust = -0.05, family = font, size = 2.5, colour = "grey30"
+    ) +
+    ggplot2::scale_fill_manual(values = c(`TRUE` = colour, `FALSE` = "grey55"), guide = "none") +
+    ggplot2::scale_x_continuous(labels = label_n, limits = c(0, NA), expand = ggplot2::expansion(c(0, 0.9))) +
+    ggplot2::labs(title = "Candidate error codes", x = "Wells with this value", y = "Value (m a.s.l.)") +
+    theme_charts(font, base_size = 10) +
+    ggplot2::theme(
+      panel.grid.major.y = ggplot2::element_blank(),
+      plot.title = ggplot2::element_text(face = "bold", size = ggplot2::rel(1.05), hjust = 0)
+    )
+
+  # values among the removed measurements found in several wells
+  removed <- removed |>
     dplyr::filter(n_wells >= 2) |>
     dplyr::mutate(
-      outside = value < spec$gwl_valid_range[1] | value > spec$gwl_valid_range[2],
-      text = sub("^-", "\u2212", format(round(value, 2), trim = TRUE, drop0trailing = TRUE)),
+      reason = ifelse(check_code == 2, "outside the valid range", "implausible depth"),
+      text = paste0(value_text(value), ifelse(check_code == 3, " *", "")),
       label = factor(text, levels = rev(unique(text)))
     )
-  if (nrow(frequent) == 0) {
-    frequent <- tibble::tibble(value = NA, n = 0, n_wells = 0, outside = FALSE, label = factor("none"))
+  if (nrow(removed) == 0) {
+    removed <- tibble::tibble(n_wells = 0, n = 0, label = factor("none"), reason = "outside the valid range")
   }
-  bars <- ggplot2::ggplot(frequent, ggplot2::aes(n_wells, label, fill = outside)) +
-    ggplot2::geom_col(width = 0.7) +
+  removed_bars <- ggplot2::ggplot(removed, ggplot2::aes(n_wells, label)) +
+    ggplot2::geom_col(width = 0.7, fill = colour, alpha = 0.7) +
     ggplot2::geom_text(
       ggplot2::aes(label = paste0(label_n(n_wells), " wells, ", label_n(n), " values")),
       hjust = -0.05, family = font, size = 2.5, colour = "grey30"
     ) +
-    ggplot2::scale_fill_manual(values = c(`TRUE` = colour, `FALSE` = "grey60"), guide = "none") +
-    ggplot2::scale_x_continuous(labels = label_n, expand = ggplot2::expansion(c(0, 0.45))) +
+    ggplot2::scale_x_continuous(labels = label_n, limits = c(0, NA), expand = ggplot2::expansion(c(0, 0.9))) +
     ggplot2::labs(
-      title = "Level values found in several wells",
-      x = "Wells with this exact value", y = "Value (m a.s.l.)"
+      title = "Removed values found in several wells",
+      x = "Wells with this value", y = "Value (m a.s.l.; * implausible depth)"
     ) +
     theme_charts(font, base_size = 10) +
     ggplot2::theme(
@@ -412,16 +490,20 @@ plot_valid_ranges <- function(depth_hist, frequent, spec, plot_config, font) {
       plot.title = ggplot2::element_text(face = "bold", size = ggplot2::rel(1.05), hjust = 0)
     )
 
-  figure <- patchwork::wrap_plots(hist, bars, widths = c(1.4, 1)) +
+  figure <- patchwork::wrap_plots(
+    hist, patchwork::wrap_plots(code_bars, removed_bars, ncol = 1, heights = c(1, 1.6)),
+    widths = c(1.3, 1)
+  ) +
     patchwork::plot_annotation(
       title = "Plausibility limits and error codes",
       subtitle = paste0(
         "Left: all measurements by their implied depth below ground, the ",
         colour_word("plausible range", colour), " (", limits[1], " to ", limits[2],
-        " m) shaded; measurements outside are removed. Right: the level values that ",
-        "occur identically in the most wells; error codes stand out there. ",
-        colour_word("Red", colour), ": outside the valid range (", spec$gwl_valid_range[1],
-        " to ", spec$gwl_valid_range[2], " m a.s.l.), removed already."
+        " m) shaded; measurements outside are removed. Right, top: common error codes ",
+        "and how often they occur; ", colour_word("red", colour), " ones lie outside the ",
+        "valid range (", spec$gwl_valid_range[1], " to ", spec$gwl_valid_range[2],
+        " m a.s.l.) and are removed, grey ones are kept as levels. Right, bottom: the ",
+        "removed values found in the most wells."
       ),
       caption = plot_config$caption,
       theme = theme_maps(font)
@@ -430,7 +512,7 @@ plot_valid_ranges <- function(depth_hist, frequent, spec, plot_config, font) {
 }
 
 # All threshold figures; returns their paths.
-plot_threshold_checks <- function(year_seasons, depth_hist, frequent, monthly, wells, spec,
+plot_threshold_checks <- function(year_seasons, depth_hist, codes, removed, monthly, wells, spec,
                                   settings, plot_config,
                                   font = setup_plot_font(plot_config$font)) {
   setup_plot_font(plot_config$font)
@@ -442,6 +524,6 @@ plot_threshold_checks <- function(year_seasons, depth_hist, frequent, monthly, w
     ),
     plot_mean_window(mean_window_change(monthly, spec), spec, plot_config, font),
     plot_spike_sensitivity(spike_sensitivity(monthly, spec, settings), spec, plot_config, font),
-    plot_valid_ranges(depth_hist, frequent, spec, plot_config, font)
+    plot_valid_ranges(depth_hist, codes, removed, spec, plot_config, font)
   )
 }

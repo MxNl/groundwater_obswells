@@ -242,8 +242,10 @@ month_date <- function(month_index) {
 # Per well statistics of the monthly means, computed in an in-memory DuckDB
 # (fast for millions of well-months):
 #   - recent window: the last recent_years * 12 months up to the reference
-#     month; spikes there (monthly means further than max(spike_mad * MAD,
-#     spike_min_dev) from the well's median, wells with >= 3 months) removed
+#     month; spikes there removed: monthly means further than
+#     max(spike_mad * MAD, spike_min_dev) from the well's median (wells with
+#     >= 3 months) and, with spike_neighbours, also that far from both
+#     neighbouring months with data, so single outliers but no real events
 #   - seasons: in how many years of the recent window each season (DJF, MAM,
 #     JJA, SON) has data; min_years_per_season is the smallest of the four
 #     (0 if a season never has data)
@@ -271,12 +273,27 @@ spread AS (
   SELECT m.well_id, 1.4826 * median(abs(m.gwl - c.med)) AS mad
   FROM m JOIN centre AS c USING (well_id) GROUP BY m.well_id
 ),
-marked AS (
+-- deviation from the median, and from the previous and next month with data
+compared AS (
   SELECT m.*,
-         c.n >= 3 AND abs(m.gwl - c.med) > greatest(%1$s * s.mad, %2$s) AS spike
+         c.n,
+         abs(m.gwl - c.med) AS dev,
+         greatest(%1$s * s.mad, %2$s) AS threshold,
+         abs(m.gwl - lag(m.gwl) OVER (PARTITION BY m.well_id ORDER BY m.month_index)) AS dev_prev,
+         abs(m.gwl - lead(m.gwl) OVER (PARTITION BY m.well_id ORDER BY m.month_index)) AS dev_next
   FROM m
   JOIN centre AS c USING (well_id)
   JOIN spread AS s USING (well_id)
+),
+-- a spike deviates from the median by more than the threshold and, with
+-- spike_neighbours, also from both neighbouring months (a missing neighbour
+-- does not count): a single outlier, not a real event lasting some months
+marked AS (
+  SELECT well_id, month_index, n_obs, gwl,
+         n >= 3 AND dev > threshold
+           AND (NOT %6$s OR ((dev_prev IS NULL OR dev_prev > threshold)
+                             AND (dev_next IS NULL OR dev_next > threshold))) AS spike
+  FROM compared
 ),
 valid AS (
   SELECT *,
@@ -386,7 +403,8 @@ LEFT JOIN annual_low USING (well_id)
 ORDER BY well_id",
     sql_number(spec$spike_mad), sql_number(spec$spike_min_dev),
     as.integer(spec$reference_month), as.integer(12 * spec$recent_years),
-    as.integer(spec$window_years)
+    as.integer(spec$window_years),
+    if (isTRUE(spec$spike_neighbours %||% TRUE)) "TRUE" else "FALSE"
   )
 }
 

@@ -87,19 +87,24 @@ theme_charts <- function(font, base_size = 14) {
 # before the layout, so a relative width would wrap them into more lines than
 # measured.
 save_figure <- function(plot, path, width, height) {
-  fit_subtitle <- function(theme) {
+  # inner: extra width taken off on each side. In a patchwork the subtitle
+  # spans only the area of the inner plots, inside their own plot margins
+  # (up to 20 pt each side), so it would run over the right edge otherwise
+  fit_subtitle <- function(theme, inner) {
     subtitle <- theme$plot.subtitle
     if (!inherits(subtitle, "element_marquee")) {
       return(theme)
     }
     margin <- theme$plot.margin %||% ggplot2::theme_grey()$plot.margin
-    subtitle$width <- grid::unit(width, "in") - margin[2] - margin[4]
+    subtitle$width <- grid::unit(width, "in") - margin[2] - margin[4] - 2 * inner
     theme + ggplot2::theme(plot.subtitle = subtitle, plot.title.position = "plot")
   }
   if (inherits(plot, "patchwork")) {
-    plot$patches$annotation$theme <- fit_subtitle(plot$patches$annotation$theme)
+    plot$patches$annotation$theme <- fit_subtitle(
+      plot$patches$annotation$theme, grid::unit(24, "pt")
+    )
   } else {
-    plot$theme <- fit_subtitle(plot$theme)
+    plot$theme <- fit_subtitle(plot$theme, grid::unit(4, "pt"))
   }
   dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
   ggplot2::ggsave(

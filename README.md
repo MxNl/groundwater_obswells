@@ -83,10 +83,12 @@ data (ranges in `threshold_settings`):
 - `mean_window.png`: how much the mean level changes with the number of most
   recent years behind it, and how many wells have that many years
 - `spikes.png`: share of monthly means removed and wells affected for each
-  factor of the MAD and minimum deviation
+  factor of the MAD and minimum deviation, with and without the neighbour
+  condition
 - `valid_ranges.png`: the implied depth of all measurements with the
-  plausibility limits, and the level values found identically in several
-  wells (error codes such as -999 or 0 stand out there)
+  plausibility limits, how often common error codes occur (`candidate_codes`;
+  grey ones lie inside the valid range and are kept as levels), and the
+  removed values found in the most wells
 and one `scenario_<id>.png` per scenario.
 
 ## Depth to groundwater
@@ -107,7 +109,9 @@ How the mean depth is calculated:
    month (`reference_date`, NULL: today).
 4. **Spikes**: monthly means further than `max(spike_mad * MAD,
    spike_min_dev)` from the well's median in the recent window are removed
-   (`n_months_spike`).
+   (`n_months_spike`). With `spike_neighbours` (default) only if they lie
+   that far from both neighbouring months too: single outliers are removed,
+   real events lasting some months (wet winters, droughts) stay.
 5. **Mean window**: the `window_years` (5) most recent calendar years with
    data in the recent window, not necessarily consecutive, so the mean
    focuses on the latest data. `gwl_mean` is the mean of their monthly means;
@@ -212,3 +216,12 @@ only SQL Server's catalogue views, so no table is scanned. The groundwater
 levels (`R/wells.R`) are checked and averaged per month on the server, so
 only the monthly means of the window come back; DuckDB does the rest. Results come back
 as tibbles for dplyr.
+
+## Planned
+
+- Ground surface elevation: where `elev_gs` is missing, estimate it from
+  `elev_mp` minus the median stick-up, flagged as estimated (about 1,100
+  wells in NW lack `elev_gs`).
+- Estimated screens from the total well depth, flagged as estimated, if
+  the metadata have such a column (screen depths are missing for most wells
+  in BY, BW and ST).
