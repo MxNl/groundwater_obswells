@@ -65,7 +65,14 @@ list(
       window_years = 5
     )
   ),
-  tar_target(well_spec, resolve_well_spec(well_config, db_columns, db_tables)),
+  # the month the recent window ends with: checked on every run, changes
+  # (and reruns the queries) only when a new month starts
+  tar_target(
+    reference_month,
+    current_reference_month(well_config$reference_date),
+    cue = tar_cue(mode = "always")
+  ),
+  tar_target(well_spec, resolve_well_spec(well_config, db_columns, db_tables, reference_month)),
   # checksums of the metadata columns used, on every run (the metadata table
   # is small): changed values (e.g. screen depths filled in) rerun the
   # metadata query, changed ground elevations also the level queries

@@ -220,8 +220,9 @@ used. The queries rerun when:
   elevation changed, the level queries too, as they check the depth below
   ground,
 - the settings they use change (`query_spec`, `threshold_query_settings`),
-- a new month starts, as the recent window moves on (fix it with
-  `reference_date` in `well_config`).
+- a new month starts, as the recent window moves on: the target
+  `reference_month` is checked on every run and changes only then (fix the
+  window with `reference_date` in `well_config`).
 
 Corrected levels in `tbl_gwl_raw` with the same number of rows are read at
 the next new month at the latest; to read them at once, run

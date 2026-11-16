@@ -27,7 +27,7 @@ date_types <- c("date", "datetime", "datetime2", "smalldatetime", "datetimeoffse
 # Checks the configured tables and columns against the catalogue and fills in
 # what is not configured. Includes the row counts of both tables, so the
 # targets that read them rerun when data are added.
-resolve_well_spec <- function(config, columns, tables) {
+resolve_well_spec <- function(config, columns, tables, reference_month) {
   find_table <- function(name) {
     hit <- dplyr::distinct(dplyr::filter(columns, table_name == name), table_schema, table_name)
     if (nrow(hit) != 1) {
@@ -99,12 +99,19 @@ resolve_well_spec <- function(config, columns, tables) {
   spec$gwl_n_rows <- n_rows(gwl_schema, config$gwl_table)
   spec$x <- x_col
   spec$y <- y_col
-  # month the recent window ends with (as year * 12 + month - 1); with
-  # reference_date NULL the current month, so the window moves on monthly
-  reference <- as.Date(config$reference_date %||% Sys.Date())
-  spec$reference_month <- as.integer(format(reference, "%Y")) * 12L +
-    as.integer(format(reference, "%m")) - 1L
+  # month the recent window ends with, from the target reference_month
+  spec$reference_month <- reference_month
   spec
+}
+
+# The month the recent window ends with, as year * 12 + month - 1: the month
+# of reference_date, or with NULL the current month. A target of its own that
+# runs on every tar_make(): targets does not watch the clock, so only this
+# way the window moves on when a new month starts. Its value changes only
+# then, so the targets after it rerun once a month.
+current_reference_month <- function(reference_date = NULL) {
+  reference <- as.Date(reference_date %||% Sys.Date())
+  as.integer(format(reference, "%Y")) * 12L + as.integer(format(reference, "%m")) - 1L
 }
 
 # Coordinate column by its name: exact names first, then name prefixes
