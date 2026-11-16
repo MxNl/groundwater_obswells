@@ -237,5 +237,66 @@ list(
     flowchart_plot,
     plot_flowchart(well_dtw, scenarios, scenario_steps, well_spec, plot_config, plot_font),
     format = "file"
+  ),
+
+  # Source check (temporary) ------------------------------------------------------
+  # Compares the metadata of gw_base with FARM, meer and the original state
+  # data; outputs in plots/source_check/ and output/source_check/. Remove this
+  # block and R/source_check.R when the check is done.
+  tar_target(
+    check_settings,
+    list(
+      dir = "cache",
+      farm_file = "check_farm/stammdaten_geo.csv",
+      meer_dir = "check_meer", meer_pattern = "hoehe_abweichung",
+      laender_dir = "check_original-laender", laender_pattern = "Stammdaten",
+      # Columns per source: the ID and the compared fields (names as in the
+      # files; case, umlauts, spaces and signs do not matter). Entries for a
+      # single state file as e.g. laender_ST = list(id = "Messtellen_ID")
+      # override those of the type. A field left out is not compared.
+      mapping = list(
+        farm = list(
+          id = "messstellen_id", elev_mp = "messpunkth\u00f6he__m_nn_", elev_gs = "gok__m_nn_",
+          screen_bot = "filter_uk_unter_gok", screen_top = "filter_ok_unter_gok"
+        ),
+        meer = list(
+          id = "Messstelle_FARM", elev_gs = "Hoehe_GOK_gemeldet_m_NN", screen_top = "Filter_m_u_GOK"
+        ),
+        laender = list(
+          id = "Messtellen-ID", elev_mp = "Messpunkth\u00f6he [m NN]", elev_gs = "GOK [m NN]",
+          screen_bot = "Filter-UK unter GOK", screen_top = "Filter-OK unter GOK"
+        ),
+        laender_ST = list(id = "Messtellen_ID"),
+        gw_base = list(id = "well_id", elev_gs = "elev_gs", screen_bot = "screen_bot", screen_top = "screen_top")
+      ),
+      # gw_base coordinates (EPSG 25832), for the distance of linked wells
+      gwbase_coords = list(x = "x_25832", y = "y_25832"),
+      # Wells are linked by state and ID; a state prefix ("HE_", "HE-") is
+      # removed from the IDs first. To link a file by another gw_base
+      # column, name it per file name or source type, e.g.
+      # list("Stammdaten_HE.xlsx" = "mst_nr"). With id_auto = TRUE the best
+      # gw_base column is used where the mapped ID links less than half of
+      # a file's wells and another column at least 20 points more.
+      id_pairs = list(),
+      id_auto = TRUE,
+      # differences larger than this (m) are listed in large_differences.csv
+      report_threshold_m = 1
+    )
+  ),
+  tar_target(check_files, check_input_files(check_settings), format = "file"),
+  tar_target(check_sources, read_check_sources(check_files, check_settings)),
+  tar_target(check_gwbase, fetch_gwbase_check(query_spec, db_columns, meta_checksums$all)),
+  tar_target(check_matching, check_id_matching(check_sources, check_gwbase, check_settings)),
+  tar_target(check_pairs, choose_id_pairs(check_matching, check_settings)),
+  tar_target(check_joined, check_join(check_sources, check_gwbase, check_pairs, check_settings)),
+  tar_target(check_values_long, check_values(check_joined, check_sources$report)),
+  tar_target(check_compared, check_differences(check_values_long)),
+  tar_target(
+    check_outputs,
+    write_source_check(
+      check_sources, check_matching, check_pairs, check_joined, check_values_long,
+      check_compared, check_settings, plot_config, plot_font
+    ),
+    format = "file"
   )
 )

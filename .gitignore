@@ -7,6 +7,7 @@
 _targets/
 cache/
 plots/
+output/
 
 # data files and outputs ---------------------------------------------------------
 *.csv

@@ -12,7 +12,7 @@ and time series from a Microsoft SQL Server database.
    install.packages(c(
      "targets", "odbc", "pool", "duckdb", "DBI", "dplyr", "tibble", "tidyr", "keyring",
      "sf", "ggplot2", "ggridges", "patchwork", "marquee", "scales", "ragg",
-     "systemfonts", "rnaturalearthdata", "withr"
+     "systemfonts", "rnaturalearthdata", "withr", "readxl"
    ))
    ```
 
@@ -236,6 +236,41 @@ only SQL Server's catalogue views, so no table is scanned. The groundwater
 levels (`R/wells.R`) are checked and averaged per month on the server, so
 only the monthly means of the window come back; DuckDB does the rest. Results come back
 as tibbles for dplyr.
+
+## Source check (temporary)
+
+Compares the well metadata of gw_base with three other sources and these
+among each other, kept apart from the rest (targets `check_*`,
+`R/source_check.R`, settings in `check_settings`), to be removed when done.
+Needs the package readxl.
+
+- Inputs in `cache/`: `check_farm/stammdaten_geo.csv` (FARM),
+  `check_meer/FARM_*_hoehe_abweichung.*` (meer, with a DEM elevation) and
+  `check_original-laender/*Stammdaten*` (original data of the states).
+  Separator, decimal comma and encoding (UTF-8 or Windows-1252) are
+  detected; all values are read as text first, so IDs keep their leading
+  zeros.
+- Columns: `check_settings$mapping` names, per source, the ID column and the
+  columns of ground elevation, measuring point, screen top and bottom (a
+  field left out is not compared; entries such as `laender_ST` apply to one
+  state's file). Case, umlauts, spaces and signs in the names do not matter.
+  `output/source_check/column_mapping.csv` shows which column was found.
+- IDs: the wells of all sources are linked by state and ID. A state prefix
+  (`HE_`, `HE-`), spaces, punctuation and leading zeros are removed first,
+  so `HE_00001000`, `1000` and `HE-1000` (in Hessen) are the same well. The
+  state comes from the file name, a state column or the ID prefix. As a
+  check, every gw_base column with text or whole numbers is also tried
+  (`id_matching.csv`, `plots/source_check/id_matching.png`, with the
+  distances between the coordinates of linked wells). If the mapped ID
+  links less than half of a file's wells and another column clearly more,
+  that column is used (`id_auto`, noted in `id_pairs.csv`); a column can
+  also be set per file in `id_pairs`.
+- Comparison of every pair of sources (gw_base, FARM, meer, states, and the
+  meer DEM as a ground elevation) per field, for the wells in both:
+  `agreement.png` (share of wells by size of the difference, per pair,
+  field and state), `differences.png` (each well), `values.csv` (all values
+  side by side), `differences.csv` and `large_differences.csv` (above
+  `report_threshold_m`).
 
 ## Planned
 
