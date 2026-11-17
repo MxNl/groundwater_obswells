@@ -278,9 +278,10 @@ Needs the package readxl.
   (`elev_gs_farm`, ...), the differences to gw_base
   (`elev_gs_farm_minus_gw_base`, ...) and the distances of the coordinates
   to gw_base. `meer_differences.png` shows per field, source and state how
-  many meer wells differ from gw_base by how much, `meer_map.png` where
-  (ground elevation), `meer_large_differences.csv` the differences above
-  `report_threshold_m`. Target `check_meer_elevation`
+  many meer wells differ from the state data (the reference,
+  `meer_reference`, since gw_base does not contain all wells) by how much,
+  `meer_map.png` where (ground elevation), `meer_large_differences.csv` the
+  differences above `report_threshold_m`. Target `check_meer_elevation`
   (written by target `check_meer_elevation_csv` to
   `output/source_check/meer_elevation.csv`): the meer wells with the ground elevation and
   measuring point of every source side by side and the difference between

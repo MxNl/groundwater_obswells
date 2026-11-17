@@ -598,46 +598,67 @@ write_check_csv <- function(data, path) {
 check_class_colours <- c(
   "up to 1 cm" = "#1B998B", "up to 10 cm" = "#8CC7BD", "up to 1 m" = "#F0A202",
   "up to 5 m" = "#E4572E", "over 5 m" = "#83053C",
-  "no value" = "grey82", "well not in the source" = "grey62", "well not in gw_base" = "grey35"
+  "no value" = "grey82", "well not in the source" = "grey62", "well not in the reference" = "grey35"
 )
 check_field_labels <- c(
   elev_gs = "Ground elevation", elev_mp = "Measuring point",
   screen_top = "Screen top", screen_bot = "Screen bottom"
 )
-check_comparison_labels <- c(meer = "meer", farm = "FARM", states = "states", dem = "DEM (meer)")
+check_comparison_labels <- c(
+  meer = "meer", farm = "FARM", gw_base = "gw_base", states = "states", dem = "DEM (meer)"
+)
+# the reference in titles and legends
+check_reference_names <- c(
+  meer = "meer", farm = "FARM", gw_base = "gw_base", states = "the state data", dem = "the DEM"
+)
 check_caption <- "Data: gw_base (tbl_meta_well_import), FARM, meer, original state data."
 
-# The meer table long: per well, field and source the difference to gw_base
-# and its class
-check_meer_long <- function(meer) {
+# class colours with the reference named ("well not in the state data")
+check_classes <- function(reference) {
+  colours <- check_class_colours
+  names(colours)[names(colours) == "well not in the reference"] <- paste("well not in", check_reference_names[[reference]])
+  colours
+}
+
+# The meer table long: per well, field and source the value of the source,
+# of the reference (settings$meer_reference, the state data by default),
+# the difference (source minus reference) and its class
+check_meer_long <- function(meer, reference = "states") {
+  found <- function(s) {
+    col <- paste0("in_", s)
+    if (col %in% names(meer)) meer[[col]] else rep(TRUE, nrow(meer))
+  }
+  classes <- check_classes(reference)
+  not_in_reference <- paste("well not in", check_reference_names[[reference]])
   out <- list()
   for (f in check_fields) {
-    ref <- paste0(f, "_gw_base")
+    ref <- paste0(f, "_", reference)
     if (!ref %in% names(meer)) next
-    for (s in names(check_comparison_labels)) {
+    for (s in setdiff(names(check_comparison_labels), reference)) {
       col <- paste0(f, "_", s)
       if (!col %in% names(meer)) next
-      in_source <- switch(s, farm = meer$in_farm, states = meer$in_states, rep(TRUE, nrow(meer)))
+      difference <- meer[[col]] - meer[[ref]]
+      # computed before tibble(): its column "reference" would hide the argument
+      class <- dplyr::case_when(
+        !found(reference) ~ not_in_reference,
+        !found(s) ~ "well not in the source",
+        is.na(difference) ~ "no value",
+        abs(difference) <= 0.01 ~ "up to 1 cm",
+        abs(difference) <= 0.1 ~ "up to 10 cm",
+        abs(difference) <= 1 ~ "up to 1 m",
+        abs(difference) <= 5 ~ "up to 5 m",
+        .default = "over 5 m"
+      )
       out[[length(out) + 1]] <- tibble::tibble(
         state = meer$state, key = meer$key, meer_id = meer$meer_id, well_id = meer$well_id,
-        x = meer$x_25832, y = meer$y_25832, field = f, source = s,
-        gw_base = meer[[ref]], value = meer[[col]], difference = meer[[col]] - meer[[ref]],
-        class = dplyr::case_when(
-          !meer$in_gw_base ~ "well not in gw_base",
-          !in_source ~ "well not in the source",
-          is.na(meer[[col]] - meer[[ref]]) ~ "no value",
-          abs(meer[[col]] - meer[[ref]]) <= 0.01 ~ "up to 1 cm",
-          abs(meer[[col]] - meer[[ref]]) <= 0.1 ~ "up to 10 cm",
-          abs(meer[[col]] - meer[[ref]]) <= 1 ~ "up to 1 m",
-          abs(meer[[col]] - meer[[ref]]) <= 5 ~ "up to 5 m",
-          .default = "over 5 m"
-        )
+        states_id = meer$states_id, x = meer$x_25832, y = meer$y_25832, field = f, source = s,
+        reference = meer[[ref]], value = meer[[col]], difference = difference, class = class
       )
     }
   }
   dplyr::bind_rows(out) |>
     dplyr::mutate(
-      class = factor(class, levels = names(check_class_colours)),
+      class = factor(class, levels = names(classes)),
       comparison = factor(check_comparison_labels[source], levels = rev(check_comparison_labels)),
       field_label = factor(check_field_labels[field], levels = check_field_labels)
     )
@@ -670,9 +691,9 @@ write_check_tables <- function(sources, matching, pairs, joined, values, overlap
     dplyr::arrange(source) |>
     tidyr::pivot_wider(names_from = source, values_from = value) |>
     dplyr::arrange(field, key)
-  large <- check_meer_long(meer) |>
+  large <- check_meer_long(meer, settings$meer_reference %||% "states") |>
     dplyr::filter(!is.na(difference), abs(difference) > settings$report_threshold_m) |>
-    dplyr::select(state, meer_id, well_id, field, source, gw_base, value, difference) |>
+    dplyr::select(state, meer_id, states_id, well_id, field, source, reference, value, difference) |>
     dplyr::arrange(dplyr::desc(abs(difference)))
   files <- list(
     column_mapping = sources$report, id_matching = matching, id_pairs = links,
@@ -787,9 +808,10 @@ plot_check_overlap_meer <- function(meer, plot_config, font) {
 }
 
 # The meer wells: per field, source and state the share of wells by size of
-# the difference to gw_base
-plot_check_meer <- function(meer, plot_config, font) {
-  d <- check_meer_long(meer)
+# the difference to the reference (the state data by default)
+plot_check_meer <- function(meer, reference, plot_config, font) {
+  d <- check_meer_long(meer, reference)
+  ref_name <- check_reference_names[[reference]]
   if (nrow(d) == 0) return(character(0))
   counts <- dplyr::count(d, state, field_label, comparison, class) |>
     dplyr::mutate(share = n / sum(n), .by = c(state, field_label, comparison))
@@ -800,7 +822,7 @@ plot_check_meer <- function(meer, plot_config, font) {
       ggplot2::aes(x = 1.03, y = comparison, label = label_n(n)),
       data = totals, inherit.aes = FALSE, hjust = 0, family = font, size = 2.4, colour = "grey40"
     ) +
-    ggplot2::scale_fill_manual(values = check_class_colours, name = NULL, drop = FALSE) +
+    ggplot2::scale_fill_manual(values = check_classes(reference), name = NULL, drop = FALSE) +
     ggplot2::scale_x_continuous(
       labels = scales::label_percent(), breaks = c(0, 0.5, 1),
       limits = c(0, 1.22), expand = ggplot2::expansion(0)
@@ -809,7 +831,7 @@ plot_check_meer <- function(meer, plot_config, font) {
     ggplot2::facet_grid(
       rows = ggplot2::vars(field_label), cols = ggplot2::vars(state), scales = "free_y", space = "free_y"
     ) +
-    ggplot2::labs(x = "Share of the meer wells (numbers: wells)", y = "Compared with gw_base") +
+    ggplot2::labs(x = "Share of the meer wells (numbers: wells)", y = paste("Compared with", ref_name)) +
     theme_charts(font, base_size = 10) +
     ggplot2::theme(
       panel.grid.major.y = ggplot2::element_blank(),
@@ -820,13 +842,13 @@ plot_check_meer <- function(meer, plot_config, font) {
     ggplot2::guides(fill = ggplot2::guide_legend(nrow = 2))
   figure <- patchwork::wrap_plots(p) +
     patchwork::plot_annotation(
-      title = "How far do the meer wells differ from gw_base?",
+      title = paste0("How far do the meer wells differ from ", ref_name, "?"),
       subtitle = paste0(
-        "For every well in the meer files: the value in meer, FARM, the state data ",
-        "and the DEM of meer minus the value in gw_base, by size of the difference. ",
-        "Grey: no comparison possible (no value, or the well is not found in the ",
-        "source or in gw_base). Values per well: target check_meer or ",
-        "output/source_check/meer_wells.csv."
+        "For every well in the meer files: the value in each other source minus the ",
+        "value in ", ref_name, " (the reference), by size of the difference. Grey: ",
+        "no comparison possible (no value, or the well is not found in the source or ",
+        "in ", ref_name, "). Values per well: target check_meer_elevation or ",
+        "output/source_check/meer_elevation.csv."
       ),
       caption = check_caption,
       theme = theme_maps(font)
@@ -839,9 +861,9 @@ plot_check_meer <- function(meer, plot_config, font) {
 }
 
 # Where: map of the meer wells, coloured by the difference of the ground
-# elevation to gw_base, one map per source
-plot_check_meer_map <- function(meer, germany, plot_config, font) {
-  d <- check_meer_long(meer) |> dplyr::filter(field == "elev_gs", !is.na(x), !is.na(y))
+# elevation to the reference, one map per source
+plot_check_meer_map <- function(meer, reference, germany, plot_config, font) {
+  d <- check_meer_long(meer, reference) |> dplyr::filter(field == "elev_gs", !is.na(x), !is.na(y))
   if (nrow(d) == 0) return(character(0))
   d$comparison <- factor(d$comparison, levels = check_comparison_labels)
   d <- dplyr::arrange(d, class != "up to 1 cm", as.integer(class))
@@ -849,7 +871,7 @@ plot_check_meer_map <- function(meer, germany, plot_config, font) {
   p <- ggplot2::ggplot() +
     ggplot2::geom_sf(data = germany, fill = "grey95", colour = "grey70", linewidth = 0.2) +
     ggplot2::geom_point(ggplot2::aes(x, y, colour = class), data = d, size = 0.9, stroke = 0, show.legend = TRUE) +
-    ggplot2::scale_colour_manual(values = check_class_colours, name = NULL, drop = FALSE) +
+    ggplot2::scale_colour_manual(values = check_classes(reference), name = NULL, drop = FALSE) +
     ggplot2::coord_sf(
       datum = NA, crs = sf::st_crs(germany),
       xlim = range(d$x) + c(-pad, pad), ylim = range(d$y) + c(-pad, pad)
@@ -863,7 +885,7 @@ plot_check_meer_map <- function(meer, germany, plot_config, font) {
       title = "Where do the ground elevations of the meer wells differ?",
       subtitle = paste0(
         "Each point a well in the meer files, coloured by its ground elevation in the ",
-        "source (map title) minus gw_base. Large differences on top."
+        "source (map title) minus ", check_reference_names[[reference]], ". Large differences on top."
       ),
       caption = check_caption,
       theme = theme_maps(font)
@@ -879,7 +901,7 @@ write_source_check <- function(sources, matching, pairs, joined, values, overlap
     write_check_tables(sources, matching, pairs, joined, values, overlap, meer, settings),
     plot_check_overlap(overlap, plot_config, font),
     plot_check_overlap_meer(meer, plot_config, font),
-    plot_check_meer(meer, plot_config, font),
-    plot_check_meer_map(meer, germany, plot_config, font)
+    plot_check_meer(meer, settings$meer_reference %||% "states", plot_config, font),
+    plot_check_meer_map(meer, settings$meer_reference %||% "states", germany, plot_config, font)
   )
 }

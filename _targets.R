@@ -279,7 +279,11 @@ list(
       # a file's wells and another column at least 20 points more.
       id_pairs = list(),
       id_auto = TRUE,
-      # differences larger than this (m) are listed in large_differences.csv
+      # reference of the comparison of the meer wells (meer_differences.png,
+      # meer_map.png, meer_large_differences.csv): "states", "gw_base",
+      # "farm" or "meer"
+      meer_reference = "states",
+      # differences larger than this (m) are listed in meer_large_differences.csv
       report_threshold_m = 1
     )
   ),
