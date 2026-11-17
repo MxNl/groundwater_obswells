@@ -268,12 +268,19 @@ Needs the package readxl.
   PROJ does not know (such as 0) count as missing, and the CRS is guessed
   from the coordinates; `id_pairs.csv` counts these wells and lists the
   codes.
-- Comparison of every pair of sources (gw_base, FARM, meer, states, and the
-  meer DEM as a ground elevation) per field, for the wells in both:
-  `agreement.png` (share of wells by size of the difference, per pair,
-  field and state), `differences.png` (each well), `values.csv` (all values
-  side by side), `differences.csv` and `large_differences.csv` (above
-  `report_threshold_m`).
+- Do the IDs match? `plots/source_check/id_overlap.png` shows per pair of
+  sources and state the wells in both, only in the left and only in the
+  right source (`id_overlap.csv`).
+- The wells of the meer files: target `check_meer` (`tar_read(check_meer)`,
+  also `meer_wells.csv`) has one row per meer well with the IDs, the values
+  of gw_base, meer, FARM, the states and the meer DEM side by side
+  (`elev_gs_farm`, ...), the differences to gw_base
+  (`elev_gs_farm_minus_gw_base`, ...) and the distances of the coordinates
+  to gw_base. `meer_differences.png` shows per field, source and state how
+  many meer wells differ from gw_base by how much, `meer_map.png` where
+  (ground elevation), `meer_large_differences.csv` the differences above
+  `report_threshold_m`. `values.csv` has the values of all wells of all
+  sources side by side.
 
 ## Planned
 

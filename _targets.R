@@ -290,12 +290,16 @@ list(
   tar_target(check_pairs, choose_id_pairs(check_matching, check_settings)),
   tar_target(check_joined, check_join(check_sources, check_gwbase, check_pairs, check_settings)),
   tar_target(check_values_long, check_values(check_joined, check_sources$report)),
-  tar_target(check_compared, check_differences(check_values_long)),
+  # per pair of sources and state: wells in both, only in one
+  tar_target(check_overlap, check_id_overlap(check_joined)),
+  # the meer wells with the values of all sources side by side (one row per
+  # well; look at it with tar_read(check_meer))
+  tar_target(check_meer, check_meer_table(check_joined, check_values_long)),
   tar_target(
     check_outputs,
     write_source_check(
       check_sources, check_matching, check_pairs, check_joined, check_values_long,
-      check_compared, check_settings, plot_config, plot_font
+      check_overlap, check_meer, check_settings, germany, plot_config, plot_font
     ),
     format = "file"
   )

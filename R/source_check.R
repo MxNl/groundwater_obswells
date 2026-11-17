@@ -11,8 +11,9 @@
 # everything as text first); take the ID and the compared fields from the
 # columns named in check_settings$mapping (column_mapping.csv shows what was
 # found); link the wells of all sources by state and normalised ID (a state
-# prefix such as "HE_" removed); check the links by the coordinates; compare
-# every pair of sources per field.
+# prefix such as "HE_" removed); show per pair of sources and state how many
+# wells are in both; for the wells of the meer files, put the values of all
+# sources side by side and compare them with gw_base.
 
 # Compared fields
 check_fields <- c("elev_gs", "elev_mp", "screen_top", "screen_bot")
@@ -103,6 +104,10 @@ norm_id <- function(x) {
 # Numbers written with a decimal comma or point, spaces as thousands marks
 parse_num <- function(x) {
   x <- gsub("[[:space:]]", "", as.character(x))
+  # both signs: the last one is the decimal mark ("1.234,5" or "1,234.5")
+  both <- grepl(",", x, fixed = TRUE) & grepl(".", x, fixed = TRUE)
+  german <- both & regexpr(",[^,]*$", x) > regexpr("\\.[^.]*$", x)
+  x[german] <- gsub(".", "", x[german], fixed = TRUE)
   comma_only <- grepl(",", x, fixed = TRUE) & !grepl(".", x, fixed = TRUE)
   x[comma_only] <- sub(",", ".", x[comma_only], fixed = TRUE)
   x <- gsub(",", "", x, fixed = TRUE)
@@ -448,64 +453,153 @@ check_values <- function(joined, report) {
     dplyr::mutate(state = sub(" .*$", "", key), state = ifelse(state == "NA", NA, state))
 }
 
-# Every pair of sources per field, for the wells in both: the values and the
-# difference (second minus first; the first is the earlier one in
-# check_source_labels, so gw_base is always the reference).
-check_differences <- function(values) {
-  sources <- intersect(names(check_source_labels), unique(values$source))
-  pairs <- utils::combn(sources, 2, simplify = FALSE)
-  out <- lapply(pairs, function(p) {
-    a <- dplyr::filter(values, source == p[1])
-    b <- dplyr::filter(values, source == p[2])
-    dplyr::inner_join(
-      dplyr::select(a, key, well_id, state, field, value_first = value),
-      dplyr::select(b, key, field, value_second = value),
-      by = c("key", "field")
-    ) |>
-      dplyr::mutate(first = p[1], second = p[2], .after = field)
+# Do the IDs match? Per pair of sources and state: the wells (keys) in both,
+# only in the first and only in the second source. The states are those of
+# the other source in pairs with gw_base (a state missing in gw_base shows),
+# else those of the source with fewer states, so a source covering three
+# states is not compared with all states of another one.
+check_id_overlap <- function(joined) {
+  keys <- dplyr::bind_rows(
+    dplyr::transmute(joined$gwbase, source = "gw_base", key),
+    dplyr::transmute(joined$rows, source, key)
+  ) |>
+    dplyr::filter(!is.na(key)) |>
+    dplyr::distinct() |>
+    dplyr::mutate(state = sub(" .*$", "", key), state = ifelse(state == "NA", "unknown", state))
+  sources <- intersect(c("gw_base", "farm", "meer", "laender"), unique(keys$source))
+  if (length(sources) < 2) return(tibble::tibble())
+  out <- lapply(utils::combn(sources, 2, simplify = FALSE), function(p) {
+    a <- keys[keys$source == p[1], ]
+    b <- keys[keys$source == p[2], ]
+    states <- if (p[1] == "gw_base" || length(unique(b$state)) <= length(unique(a$state))) {
+      unique(b$state)
+    } else {
+      unique(a$state)
+    }
+    dplyr::bind_rows(lapply(sort(states), function(s) {
+      ka <- a$key[a$state == s]
+      kb <- b$key[b$state == s]
+      tibble::tibble(
+        first = p[1], second = p[2], state = s,
+        both = length(intersect(ka, kb)),
+        only_first = length(setdiff(ka, kb)),
+        only_second = length(setdiff(kb, ka))
+      )
+    }))
   })
   dplyr::bind_rows(out) |>
-    dplyr::filter(!is.na(value_first) | !is.na(value_second)) |>
     dplyr::mutate(
-      pair = paste(check_source_labels[first], "vs.", check_source_labels[second]),
-      difference = value_second - value_first,
-      class = dplyr::case_when(
-        is.na(value_first) ~ "only in the second",
-        is.na(value_second) ~ "only in the first",
-        abs(difference) <= 0.01 ~ "same (\u2264 1 cm)",
-        abs(difference) <= 0.1 ~ "\u2264 10 cm",
-        abs(difference) <= 1 ~ "\u2264 1 m",
-        abs(difference) <= 5 ~ "\u2264 5 m",
-        .default = "> 5 m"
-      )
+      share_of_first_found = both / (both + only_first),
+      share_of_second_found = both / (both + only_second)
     )
 }
 
-# Outputs -------------------------------------------------------------------------------
+# Source names in the columns of the meer table
+check_column_names <- c(gw_base = "gw_base", farm = "farm", meer = "meer", laender = "states", dem = "dem")
+
+# The wells of the meer files with the IDs, values and coordinate distances
+# of all other sources side by side: one row per meer well. Columns:
+# <field>_<source> (e.g. elev_gs_farm), <field>_<source>_minus_gw_base, and
+# distance_<source>_m (distance of the source's coordinates to gw_base).
+check_meer_table <- function(joined, values) {
+  rows <- dplyr::filter(joined$rows, !is.na(key)) |> dplyr::distinct(key, source, .keep_all = TRUE)
+  meer <- rows |>
+    dplyr::filter(source == "meer") |>
+    dplyr::transmute(state, key, meer_file = file, meer_id = id, x_25832 = x25832, y_25832 = y25832,
+                     distance_meer_m = distance_m)
+  if (nrow(meer) == 0) return(meer)
+  gw <- dplyr::distinct(joined$gwbase, key, .keep_all = TRUE) |> dplyr::select(key, well_id)
+  others <- lapply(c("farm", "laender"), function(s) {
+    name <- check_column_names[[s]]
+    d <- dplyr::filter(rows, source == s) |> dplyr::select(key, id, distance_m)
+    names(d) <- c("key", paste0(name, "_id"), paste0("distance_", name, "_m"))
+    d
+  })
+  wide <- values |>
+    dplyr::filter(key %in% meer$key) |>
+    dplyr::mutate(column = paste(field, check_column_names[source], sep = "_")) |>
+    dplyr::select(key, column, value) |>
+    tidyr::pivot_wider(names_from = column, values_from = value)
+  out <- meer |>
+    dplyr::left_join(gw, by = "key") |>
+    dplyr::left_join(others[[1]], by = "key") |>
+    dplyr::left_join(others[[2]], by = "key") |>
+    dplyr::mutate(
+      in_gw_base = !is.na(well_id), in_farm = !is.na(farm_id), in_states = !is.na(states_id)
+    ) |>
+    dplyr::left_join(wide, by = "key")
+  for (f in check_fields) {
+    ref <- paste0(f, "_gw_base")
+    if (!ref %in% names(out)) next
+    for (s in c("meer", "farm", "states", "dem")) {
+      col <- paste0(f, "_", s)
+      if (col %in% names(out)) out[[paste0(col, "_minus_gw_base")]] <- out[[col]] - out[[ref]]
+    }
+  }
+  # per field: the values of all sources next to each other, then the
+  # differences; the distances at the end
+  order <- unlist(lapply(check_fields, function(f) {
+    c(paste0(f, "_", c("gw_base", "meer", "farm", "states", "dem")),
+      paste0(f, "_", c("meer", "farm", "states", "dem"), "_minus_gw_base"))
+  }))
+  first <- setdiff(names(out), c(order, grep("^distance_", names(out), value = TRUE)))
+  out[, c(first, intersect(order, names(out)), grep("^distance_", names(out), value = TRUE))] |>
+    dplyr::arrange(state, key)
+}
 
 check_class_colours <- c(
-  "same (\u2264 1 cm)" = "#1B998B", "\u2264 10 cm" = "#8CC7BD", "\u2264 1 m" = "#F0A202",
-  "\u2264 5 m" = "#E4572E", "> 5 m" = "#83053C",
-  "only in the first" = "grey80", "only in the second" = "grey55"
+  "up to 1 cm" = "#1B998B", "up to 10 cm" = "#8CC7BD", "up to 1 m" = "#F0A202",
+  "up to 5 m" = "#E4572E", "over 5 m" = "#83053C",
+  "no value" = "grey82", "well not in the source" = "grey62", "well not in gw_base" = "grey35"
 )
 check_field_labels <- c(
   elev_gs = "Ground elevation", elev_mp = "Measuring point",
   screen_top = "Screen top", screen_bot = "Screen bottom"
 )
+check_comparison_labels <- c(meer = "meer", farm = "FARM", states = "states", dem = "DEM (meer)")
 check_caption <- "Data: gw_base (tbl_meta_well_import), FARM, meer, original state data."
 
-# pair labels in the order of the sources
-check_pair_levels <- function(pairs) {
-  s <- names(check_source_labels)
-  all <- utils::combn(s, 2, simplify = FALSE)
-  labels <- vapply(all, function(p) paste(check_source_labels[p[1]], "vs.", check_source_labels[p[2]]), "")
-  labels[labels %in% pairs]
+# The meer table long: per well, field and source the difference to gw_base
+# and its class
+check_meer_long <- function(meer) {
+  out <- list()
+  for (f in check_fields) {
+    ref <- paste0(f, "_gw_base")
+    if (!ref %in% names(meer)) next
+    for (s in names(check_comparison_labels)) {
+      col <- paste0(f, "_", s)
+      if (!col %in% names(meer)) next
+      in_source <- switch(s, farm = meer$in_farm, states = meer$in_states, rep(TRUE, nrow(meer)))
+      out[[length(out) + 1]] <- tibble::tibble(
+        state = meer$state, key = meer$key, meer_id = meer$meer_id, well_id = meer$well_id,
+        x = meer$x_25832, y = meer$y_25832, field = f, source = s,
+        gw_base = meer[[ref]], value = meer[[col]], difference = meer[[col]] - meer[[ref]],
+        class = dplyr::case_when(
+          !meer$in_gw_base ~ "well not in gw_base",
+          !in_source ~ "well not in the source",
+          is.na(meer[[col]] - meer[[ref]]) ~ "no value",
+          abs(meer[[col]] - meer[[ref]]) <= 0.01 ~ "up to 1 cm",
+          abs(meer[[col]] - meer[[ref]]) <= 0.1 ~ "up to 10 cm",
+          abs(meer[[col]] - meer[[ref]]) <= 1 ~ "up to 1 m",
+          abs(meer[[col]] - meer[[ref]]) <= 5 ~ "up to 5 m",
+          .default = "over 5 m"
+        )
+      )
+    }
+  }
+  dplyr::bind_rows(out) |>
+    dplyr::mutate(
+      class = factor(class, levels = names(check_class_colours)),
+      comparison = factor(check_comparison_labels[source], levels = rev(check_comparison_labels)),
+      field_label = factor(check_field_labels[field], levels = check_field_labels)
+    )
 }
 
-# Tables as csv in output/source_check/: the column mapping, the ID matching,
-# the ID pairs used with link and distance figures, all values side by side,
-# the pairwise differences and the large ones. Returns the paths.
-write_check_tables <- function(sources, matching, pairs, joined, values, differences, settings) {
+# Tables as csv in output/source_check/: the column mapping, the ID
+# matching, the ID pairs used, the ID overlap per pair of sources and state,
+# all values side by side, the meer table and its large differences.
+# Returns the paths.
+write_check_tables <- function(sources, matching, pairs, joined, values, overlap, meer, settings) {
   dir <- file.path("output", "source_check")
   dir.create(dir, showWarnings = FALSE, recursive = TRUE)
   links <- joined$rows |>
@@ -527,12 +621,13 @@ write_check_tables <- function(sources, matching, pairs, joined, values, differe
     dplyr::arrange(source) |>
     tidyr::pivot_wider(names_from = source, values_from = value) |>
     dplyr::arrange(field, key)
-  large <- differences |>
+  large <- check_meer_long(meer) |>
     dplyr::filter(!is.na(difference), abs(difference) > settings$report_threshold_m) |>
+    dplyr::select(state, meer_id, well_id, field, source, gw_base, value, difference) |>
     dplyr::arrange(dplyr::desc(abs(difference)))
   files <- list(
     column_mapping = sources$report, id_matching = matching, id_pairs = links,
-    values = wide, differences = differences, large_differences = large
+    id_overlap = overlap, values = wide, meer_wells = meer, meer_large_differences = large
   )
   vapply(names(files), function(name) {
     path <- file.path(dir, paste0(name, ".csv"))
@@ -541,183 +636,151 @@ write_check_tables <- function(sources, matching, pairs, joined, values, differe
   }, character(1))
 }
 
-# reorder within facets: labels made unique per facet, the suffix removed in
-# the axis labels
-tidytext_reorder <- function(x, by, within) {
-  stats::reorder(paste(x, within, sep = "___"), by)
-}
-
-plot_check_matching <- function(matching, pairs, joined, plot_config, font) {
-  used <- paste(pairs$file, pairs$gwbase_column)
-  top <- matching |>
-    dplyr::mutate(used = paste(file, gwbase_column) %in% used) |>
-    dplyr::filter(used | mapped | rank(-(share_with_state + share_id_only / 1000), ties.method = "first") <= 3, .by = file) |>
+# Bar per pair of sources and state: the wells only in the left source, in
+# both and only in the right source
+plot_check_overlap <- function(overlap, plot_config, font) {
+  colours <- c("only in the left source" = "#F0A202", "in both" = "#2E86AB", "only in the right source" = "#E4572E")
+  pair_levels <- unique(paste0(check_source_labels[overlap$first], "  |  ", check_source_labels[overlap$second]))
+  d <- overlap |>
+    dplyr::mutate(pair = factor(paste0(check_source_labels[first], "  |  ", check_source_labels[second]), levels = pair_levels)) |>
+    tidyr::pivot_longer(c(only_first, both, only_second), names_to = "part", values_to = "n") |>
     dplyr::mutate(
-      label = paste0(gwbase_column, ifelse(mapped, " (mapping)", "")),
-      source = paste0(check_source_labels[source], ": ", file)
+      part = factor(names(colours)[match(part, c("only_first", "both", "only_second"))], levels = names(colours)),
+      share = n / sum(n), total = sum(n),
+      .by = c(pair, state)
     ) |>
-    dplyr::mutate(label = tidytext_reorder(label, share_with_state, source))
-  bars <- ggplot2::ggplot(top, ggplot2::aes(y = label)) +
-    ggplot2::geom_col(ggplot2::aes(x = share_id_only), fill = NA, colour = "grey55", width = 0.7, linewidth = 0.3) +
-    ggplot2::geom_col(ggplot2::aes(x = share_with_state, fill = used), width = 0.7) +
+    dplyr::mutate(state = factor(state, levels = rev(sort(unique(state)))))
+  p <- ggplot2::ggplot(d, ggplot2::aes(share, state, fill = part)) +
+    ggplot2::geom_col(width = 0.75, position = ggplot2::position_stack(reverse = TRUE)) +
     ggplot2::geom_text(
-      ggplot2::aes(x = share_with_state, label = scales::label_percent(accuracy = 1)(share_with_state)),
-      hjust = -0.15, family = font, size = 2.6, colour = "grey25"
+      ggplot2::aes(label = ifelse(share >= 0.1, label_n(n), "")),
+      position = ggplot2::position_stack(vjust = 0.5, reverse = TRUE),
+      family = font, size = 2.5, colour = "white"
     ) +
-    ggplot2::scale_fill_manual(values = c(`TRUE` = "#2E86AB", `FALSE` = "grey70"), guide = "none") +
-    ggplot2::scale_x_continuous(labels = scales::label_percent(), limits = c(0, 1.12), expand = ggplot2::expansion(0)) +
-    ggplot2::facet_wrap(ggplot2::vars(source), ncol = 2, scales = "free_y") +
-    ggplot2::scale_y_discrete(labels = function(x) sub("___.*$", "", x)) +
-    ggplot2::labs(
-      title = "gw_base column compared with the ID of the file",
-      x = "Wells of the file found in gw_base (bar: same state and ID; outline: ID only)", y = NULL
-    ) +
+    ggplot2::scale_fill_manual(values = colours, name = NULL) +
+    ggplot2::scale_x_continuous(labels = scales::label_percent(), breaks = c(0, 0.5, 1), expand = ggplot2::expansion(0)) +
+    ggplot2::facet_wrap(ggplot2::vars(pair), ncol = 2, scales = "free_y") +
+    ggplot2::labs(x = "Share of the wells in either source (numbers: wells)", y = NULL) +
     theme_charts(font, base_size = 10) +
     ggplot2::theme(
       panel.grid.major.y = ggplot2::element_blank(),
       strip.text = ggplot2::element_text(face = "bold", hjust = 0),
-      plot.title = ggplot2::element_text(face = "bold", size = ggplot2::rel(1.05), hjust = 0)
+      legend.position = "top", panel.spacing.x = grid::unit(1.5, "lines")
     )
-
-  dist <- joined$rows |>
-    dplyr::filter(matched, !is.na(distance_m)) |>
-    dplyr::mutate(source = paste0(check_source_labels[source], ": ", file))
-  if (nrow(dist) == 0) dist <- tibble::tibble(distance_m = NA_real_, source = "no coordinates")
-  distances <- ggplot2::ggplot(dist, ggplot2::aes(pmax(distance_m, 0.1), source)) +
-    ggplot2::geom_vline(xintercept = 100, colour = "#E4572E", linewidth = 0.4, linetype = "22") +
-    ggplot2::geom_jitter(height = 0.25, width = 0, size = 0.6, alpha = 0.4, colour = "grey30", na.rm = TRUE) +
-    ggplot2::scale_x_log10(labels = function(x) paste(label_n(x), "m"), breaks = c(0.1, 1, 10, 100, 1000, 10000, 1e5)) +
-    ggplot2::labs(
-      title = "Distance between the coordinates of linked wells",
-      x = "Distance to gw_base (log scale; below 0.1 m shown at 0.1 m)", y = NULL
-    ) +
-    theme_charts(font, base_size = 10) +
-    ggplot2::theme(plot.title = ggplot2::element_text(face = "bold", size = ggplot2::rel(1.05), hjust = 0))
-
-  n_files <- length(unique(top$source))
-  figure <- patchwork::wrap_plots(bars, distances, ncol = 1, heights = c(ceiling(n_files / 2) * 0.9, 0.25 * n_files + 0.6)) +
+  figure <- patchwork::wrap_plots(p) +
     patchwork::plot_annotation(
-      title = "Do the IDs link the right wells?",
+      title = "Do the IDs match?",
       subtitle = paste0(
-        "Top: share of each file's wells found in gw_base by state and ID (a state ",
-        "prefix such as HE_, spaces and leading zeros removed), for the gw_base ",
-        "column of the mapping and the best other columns; ", colour_word("blue", "#2E86AB"),
-        ": the column used. Bottom: distance between the coordinates of the linked ",
-        "wells; beyond 100 m points to wrong links or wrong coordinates."
+        "Per pair of sources and state: wells ", colour_word("in both", "#2E86AB"),
+        ", only in the ", colour_word("left", "#F0A202"), " or only in the ",
+        colour_word("right", "#E4572E"), " source, linked by state and ID (state ",
+        "prefix such as HE_, punctuation and leading zeros removed). A bar mostly ",
+        "orange and red means the IDs do not match."
       ),
       caption = check_caption,
       theme = theme_maps(font)
     )
+  rows <- d |> dplyr::distinct(pair, state) |> dplyr::count(pair)
+  n_rows <- sum(stats::aggregate(rows$n, list(ceiling(seq_along(rows$n) / 2)), max)$x)
   save_figure(
-    figure, file.path(plot_config$dir, "source_check", "id_matching.png"),
-    width = figure_width, height = 3 + ceiling(n_files / 2) * 1.6 + 0.3 * n_files
+    figure, file.path(plot_config$dir, "source_check", "id_overlap.png"),
+    width = figure_width, height = 3 + 0.26 * n_rows + 0.45 * ceiling(nrow(rows) / 2)
   )
 }
 
-plot_check_agreement <- function(differences, plot_config, font) {
-  d <- differences |>
-    dplyr::count(pair, field, state, class) |>
-    dplyr::mutate(share = n / sum(n), .by = c(pair, field, state)) |>
-    dplyr::mutate(
-      class = factor(class, levels = names(check_class_colours)),
-      pair = factor(pair, levels = check_pair_levels(unique(pair))),
-      field = factor(check_field_labels[field], levels = check_field_labels),
-      state = factor(state, levels = rev(sort(unique(state))))
-    )
-  if (nrow(d) == 0) {
-    d <- tibble::tibble(share = 0, state = "none", class = factor(names(check_class_colours)[1]),
-                        pair = "no wells in two sources", field = "")
-  }
-  p <- ggplot2::ggplot(d, ggplot2::aes(share, state, fill = class)) +
+# The meer wells: per field, source and state the share of wells by size of
+# the difference to gw_base
+plot_check_meer <- function(meer, plot_config, font) {
+  d <- check_meer_long(meer)
+  if (nrow(d) == 0) return(character(0))
+  counts <- dplyr::count(d, state, field_label, comparison, class) |>
+    dplyr::mutate(share = n / sum(n), .by = c(state, field_label, comparison))
+  totals <- dplyr::count(d, state, field_label, comparison)
+  p <- ggplot2::ggplot(counts, ggplot2::aes(share, comparison, fill = class)) +
     ggplot2::geom_col(width = 0.75, position = ggplot2::position_stack(reverse = TRUE)) +
+    ggplot2::geom_text(
+      ggplot2::aes(x = 1.03, y = comparison, label = label_n(n)),
+      data = totals, inherit.aes = FALSE, hjust = 0, family = font, size = 2.4, colour = "grey40"
+    ) +
     ggplot2::scale_fill_manual(values = check_class_colours, name = NULL, drop = FALSE) +
-    ggplot2::scale_x_continuous(labels = scales::label_percent(), breaks = c(0, 0.5, 1)) +
-    ggplot2::facet_grid(rows = ggplot2::vars(pair), cols = ggplot2::vars(field), scales = "free_y", space = "free_y") +
-    ggplot2::labs(x = "Share of the wells in both sources", y = NULL) +
+    ggplot2::scale_x_continuous(
+      labels = scales::label_percent(), breaks = c(0, 0.5, 1),
+      limits = c(0, 1.22), expand = ggplot2::expansion(0)
+    ) +
+    ggplot2::coord_cartesian(clip = "off") +
+    ggplot2::facet_grid(
+      rows = ggplot2::vars(field_label), cols = ggplot2::vars(state), scales = "free_y", space = "free_y"
+    ) +
+    ggplot2::labs(x = "Share of the meer wells (numbers: wells)", y = "Compared with gw_base") +
     theme_charts(font, base_size = 10) +
     ggplot2::theme(
       panel.grid.major.y = ggplot2::element_blank(),
-      strip.text = ggplot2::element_text(face = "bold", size = ggplot2::rel(0.9)),
+      strip.text = ggplot2::element_text(face = "bold"),
       strip.text.y = ggplot2::element_text(angle = 0, hjust = 0),
-      legend.position = "bottom", panel.spacing = grid::unit(0.6, "lines")
+      legend.position = "bottom", panel.spacing.x = grid::unit(1.2, "lines")
     ) +
     ggplot2::guides(fill = ggplot2::guide_legend(nrow = 2))
   figure <- patchwork::wrap_plots(p) +
     patchwork::plot_annotation(
-      title = "Where do the sources agree?",
+      title = "How far do the meer wells differ from gw_base?",
       subtitle = paste0(
-        "Per pair of sources, field and state: share of the wells in both whose ",
-        "values are equal (within 1 cm), differ by up to 10 cm, 1 m, 5 m or more, ",
-        "or are given in only one of them. DEM (meer) is compared as a ground elevation."
+        "For every well in the meer files: the value in meer, FARM, the state data ",
+        "and the DEM of meer minus the value in gw_base, by size of the difference. ",
+        "Grey: no comparison possible (no value, or the well is not found in the ",
+        "source or in gw_base). Values per well: target check_meer or ",
+        "output/source_check/meer_wells.csv."
       ),
       caption = check_caption,
       theme = theme_maps(font)
     )
-  height <- 3 + 0.22 * nrow(dplyr::distinct(d, pair, state)) + 0.15 * length(unique(d$pair))
-  save_figure(figure, file.path(plot_config$dir, "source_check", "agreement.png"), width = figure_width, height = height)
-}
-
-# symmetric log x scale; the argument is "transform" from ggplot2 3.5, "trans" before
-pseudo_log_x <- function(...) {
-  tr <- scales::pseudo_log_trans(sigma = 0.1, base = 10)
-  if (utils::packageVersion("ggplot2") >= "3.5.0") {
-    ggplot2::scale_x_continuous(transform = tr, ...)
-  } else {
-    ggplot2::scale_x_continuous(trans = tr, ...)
-  }
-}
-
-plot_check_differences <- function(differences, settings, plot_config, font) {
-  d <- differences |>
-    dplyr::filter(field %in% c("elev_gs", "elev_mp"), !is.na(difference)) |>
-    dplyr::mutate(
-      pair = factor(pair, levels = check_pair_levels(unique(pair))),
-      panel = paste0(pair, ": ", check_field_labels[field]),
-      panel = factor(panel, levels = unique(panel[order(field, pair)])),
-      large = abs(difference) > settings$report_threshold_m
-    )
-  if (nrow(d) == 0) d <- tibble::tibble(panel = "no values", state = NA, difference = 0, large = FALSE)
-  n_panels <- length(unique(d$panel))
-  p <- ggplot2::ggplot(d, ggplot2::aes(difference, state)) +
-    ggplot2::annotate("rect", xmin = -settings$report_threshold_m, xmax = settings$report_threshold_m,
-                      ymin = -Inf, ymax = Inf, fill = "#1B998B", alpha = 0.08) +
-    ggplot2::geom_vline(xintercept = 0, colour = "grey40", linewidth = 0.3) +
-    ggplot2::geom_jitter(ggplot2::aes(colour = large), height = 0.25, width = 0, size = 0.7, alpha = 0.5) +
-    ggplot2::scale_colour_manual(values = c(`TRUE` = "#E4572E", `FALSE` = "grey45"), guide = "none") +
-    pseudo_log_x(
-      breaks = c(-100, -10, -1, 0, 1, 10, 100),
-      labels = function(x) paste(x, "m")
-    ) +
-    ggplot2::facet_wrap(ggplot2::vars(panel), ncol = 3, scales = "free_y") +
-    ggplot2::labs(x = "Second minus first source (symmetric log scale)", y = NULL) +
-    theme_charts(font, base_size = 10) +
-    ggplot2::theme(strip.text = ggplot2::element_text(face = "bold", hjust = 0, size = ggplot2::rel(0.85)))
-  figure <- patchwork::wrap_plots(p) +
-    patchwork::plot_annotation(
-      title = "How large are the differences in elevation?",
-      subtitle = paste0(
-        "Each point a well in both sources of a pair: the elevation in the second ",
-        "minus the first, by state. ",
-        colour_word(paste0("Red: more than ", settings$report_threshold_m, " m"), "#E4572E"),
-        " (listed in output/source_check/large_differences.csv); shaded: within that."
-      ),
-      caption = check_caption,
-      theme = theme_maps(font)
-    )
+  n_bars <- nrow(dplyr::distinct(d, field_label, comparison))
   save_figure(
-    figure, file.path(plot_config$dir, "source_check", "differences.png"),
-    width = figure_width, height = 3 + 1.9 * ceiling(n_panels / 3)
+    figure, file.path(plot_config$dir, "source_check", "meer_differences.png"),
+    width = figure_width, height = 3.4 + 0.32 * n_bars + 0.3 * length(unique(d$field_label))
   )
 }
 
+# Where: map of the meer wells, coloured by the difference of the ground
+# elevation to gw_base, one map per source
+plot_check_meer_map <- function(meer, germany, plot_config, font) {
+  d <- check_meer_long(meer) |> dplyr::filter(field == "elev_gs", !is.na(x), !is.na(y))
+  if (nrow(d) == 0) return(character(0))
+  d$comparison <- factor(d$comparison, levels = check_comparison_labels)
+  d <- dplyr::arrange(d, class != "up to 1 cm", as.integer(class))
+  pad <- 20000
+  p <- ggplot2::ggplot() +
+    ggplot2::geom_sf(data = germany, fill = "grey95", colour = "grey70", linewidth = 0.2) +
+    ggplot2::geom_point(ggplot2::aes(x, y, colour = class), data = d, size = 0.9, stroke = 0) +
+    ggplot2::scale_colour_manual(values = check_class_colours, name = NULL, drop = FALSE) +
+    ggplot2::coord_sf(
+      datum = NA, crs = sf::st_crs(germany),
+      xlim = range(d$x) + c(-pad, pad), ylim = range(d$y) + c(-pad, pad)
+    ) +
+    ggplot2::facet_wrap(ggplot2::vars(comparison), nrow = 1) +
+    ggplot2::guides(colour = ggplot2::guide_legend(override.aes = list(size = 3), nrow = 2)) +
+    theme_maps(font, base_size = 11) +
+    ggplot2::theme(strip.text = ggplot2::element_text(face = "bold"), legend.position = "bottom")
+  figure <- patchwork::wrap_plots(p) +
+    patchwork::plot_annotation(
+      title = "Where do the ground elevations of the meer wells differ?",
+      subtitle = paste0(
+        "Each point a well in the meer files, coloured by its ground elevation in the ",
+        "source (map title) minus gw_base. Large differences on top."
+      ),
+      caption = check_caption,
+      theme = theme_maps(font)
+    )
+  save_figure(figure, file.path(plot_config$dir, "source_check", "meer_map.png"), width = figure_width, height = 6.5)
+}
+
 # All outputs of the check; returns the paths.
-write_source_check <- function(sources, matching, pairs, joined, values, differences, settings,
-                               plot_config, font = setup_plot_font(plot_config$font)) {
+write_source_check <- function(sources, matching, pairs, joined, values, overlap, meer, settings,
+                               germany, plot_config, font = setup_plot_font(plot_config$font)) {
   setup_plot_font(plot_config$font)
   c(
-    write_check_tables(sources, matching, pairs, joined, values, differences, settings),
-    plot_check_matching(matching, pairs, joined, plot_config, font),
-    plot_check_agreement(differences, plot_config, font),
-    plot_check_differences(differences, settings, plot_config, font)
+    write_check_tables(sources, matching, pairs, joined, values, overlap, meer, settings),
+    plot_check_overlap(overlap, plot_config, font),
+    plot_check_meer(meer, plot_config, font),
+    plot_check_meer_map(meer, germany, plot_config, font)
   )
 }
