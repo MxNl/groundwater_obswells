@@ -256,21 +256,22 @@ Needs the package readxl.
   state's file). Case, umlauts, spaces and signs in the names do not matter.
   `output/source_check/column_mapping.csv` shows which column was found.
 - IDs: the wells of all sources are linked by state and ID. A state prefix
-  (`HE_`, `HE-`), spaces, punctuation and leading zeros are removed first,
-  so `HE_00001000`, `1000` and `HE-1000` (in Hessen) are the same well. The
-  state comes from the file name, a state column or the ID prefix. As a
+  (`HE_`, `HE-`) and spaces are removed first, leading zeros and other signs
+  are kept: `HE_00001000` and `00001000` (in Hessen) are the same well,
+  `1000` is not. The state comes from the file name, a state column (codes
+  or names, also within longer names such as "Freie und Hansestadt Hamburg";
+  values not recognised are reported as a warning) or the ID prefix. As a
   check, every gw_base column with text or whole numbers is also tried
-  (`id_matching.csv`, `plots/source_check/id_matching.png`, with the
-  distances between the coordinates of linked wells). If the mapped ID
-  links less than half of a file's wells and another column clearly more,
-  that column is used (`id_auto`, noted in `id_pairs.csv`); a column can
-  also be set per file in `id_pairs`. For the distances, EPSG codes that
-  PROJ does not know (such as 0) count as missing, and the CRS is guessed
-  from the coordinates; `id_pairs.csv` counts these wells and lists the
-  codes.
+  (`id_matching.csv`). If the mapped ID links less than half of a file's
+  wells and another column clearly more, that column is used (`id_auto`,
+  noted in `id_pairs.csv`); a column can also be set per file in
+  `id_pairs`. For the distances between the coordinates of linked wells
+  (`id_pairs.csv`, `check_meer`), EPSG codes that PROJ does not know (such
+  as 0) count as missing, and the CRS is guessed from the coordinates.
 - Do the IDs match? `plots/source_check/id_overlap.png` shows per pair of
   sources and state the wells in both, only in the left and only in the
-  right source (`id_overlap.csv`).
+  right source (`id_overlap.csv`); `id_overlap_meer.png` the share of the
+  meer wells found in gw_base, FARM and the state data.
 - The wells of the meer files: target `check_meer` (`tar_read(check_meer)`,
   also `meer_wells.csv`) has one row per meer well with the IDs, the values
   of gw_base, meer, FARM, the states and the meer DEM side by side
@@ -279,7 +280,11 @@ Needs the package readxl.
   to gw_base. `meer_differences.png` shows per field, source and state how
   many meer wells differ from gw_base by how much, `meer_map.png` where
   (ground elevation), `meer_large_differences.csv` the differences above
-  `report_threshold_m`. `values.csv` has the values of all wells of all
+  `report_threshold_m`. Target `check_meer_elevation`
+  (`meer_elevation.csv`): the meer wells with the ground elevation and
+  measuring point of every source side by side and the difference between
+  every pair of sources (`elev_gs_farm_minus_gw_base`,
+  `elev_gs_dem_minus_meer`, ...). `values.csv` has the values of all wells of all
   sources side by side.
 
 ## Planned

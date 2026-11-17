@@ -78,26 +78,33 @@ norm_name <- function(x) {
   gsub("^_+|_+$", "", x)
 }
 
-# Two-letter state codes from codes or names
+# Two-letter state codes from codes or names; a name is also found within
+# a longer one ("Freie und Hansestadt Hamburg", "Land Berlin"), longer names
+# first (Sachsen-Anhalt before Sachsen). NA where nothing is recognised.
 norm_state <- function(x) {
   x <- trimws(as.character(x))
-  code <- toupper(x)
-  named <- state_codes[norm_name(x)]
-  as.character(ifelse(grepl("^[A-Za-z]{2}$", x), code, unname(named)))
+  out <- toupper(x)
+  out[!out %in% state_codes] <- NA_character_
+  n <- norm_name(x)
+  aliases <- c(state_codes, nrw = "NW")
+  for (name in names(aliases)[order(-nchar(names(aliases)))]) {
+    hit <- is.na(out) & !is.na(n) & grepl(paste0("(^|_)", name, "($|_)"), n)
+    out[hit] <- aliases[[name]]
+  }
+  as.character(out)
 }
 
 # IDs comparable across sources: upper case, a leading state code with a
-# separator ("HE_", "HE-", "HE ") removed, only letters and digits, leading
-# zeros removed: "HE_00001000", "he-1000" and "1000" all give "1000". The
-# state is part of the key (state_id_key()), so equal numbers in different
-# states stay apart. Numbers read as text keep all digits ("25470023", not
-# "2.547e+07").
+# separator ("HE_", "HE-", "HE ") and spaces removed; leading zeros and other
+# signs are kept (they can be part of the ID): "HE_00001000" and "00001000"
+# give "00001000", but "1000" stays "1000". The state is part of the key
+# (state_id_key()), so equal IDs in different states stay apart. Numbers read
+# as text keep all digits ("25470023", not "2.547e+07").
 norm_id <- function(x) {
   if (is.numeric(x)) x <- format(x, scientific = FALSE, trim = TRUE, drop0trailing = TRUE)
   x <- toupper(trimws(as.character(x)))
   x <- sub(paste0("^(", paste(state_codes, collapse = "|"), ")[_ -]+"), "", x)
-  x <- gsub("[^A-Z0-9]", "", x)
-  x <- sub("^0+(?=.)", "", x, perl = TRUE)
+  x <- gsub("[[:space:]]", "", x)
   ifelse(is.na(x) | x == "" | x == "NA", NA_character_, x)
 }
 
@@ -220,6 +227,13 @@ read_check_sources <- function(files, settings) {
     }
     if (!"id" %in% names(out)) out$id <- NA_character_
     if (!"state" %in% names(out)) out$state <- NA_character_
+    unknown <- unique(out$state[!is.na(out$state) & nzchar(trimws(out$state)) & is.na(norm_state(out$state))])
+    if (length(unknown) > 0) {
+      warning(
+        "Source check: state values not recognised in ", basename(path), ": ",
+        paste(utils::head(unknown, 10), collapse = ", "), call. = FALSE
+      )
+    }
     out$state <- dplyr::coalesce(
       norm_state(out$state), file_state, state_from_id(out$id)
     )
@@ -454,10 +468,10 @@ check_values <- function(joined, report) {
 }
 
 # Do the IDs match? Per pair of sources and state: the wells (keys) in both,
-# only in the first and only in the second source. The states are those of
-# the other source in pairs with gw_base (a state missing in gw_base shows),
-# else those of the source with fewer states, so a source covering three
-# states is not compared with all states of another one.
+# only in the first and only in the second source. All states of both
+# sources, but for a regional source (meer, states) only its states, so it
+# is not compared with all states of another one. "unknown": wells without a
+# recognised state.
 check_id_overlap <- function(joined) {
   keys <- dplyr::bind_rows(
     dplyr::transmute(joined$gwbase, source = "gw_base", key),
@@ -471,7 +485,12 @@ check_id_overlap <- function(joined) {
   out <- lapply(utils::combn(sources, 2, simplify = FALSE), function(p) {
     a <- keys[keys$source == p[1], ]
     b <- keys[keys$source == p[2], ]
-    states <- if (p[1] == "gw_base" || length(unique(b$state)) <= length(unique(a$state))) {
+    # a regional source (fewer than 8 states): only its states; else all
+    n_a <- length(unique(a$state))
+    n_b <- length(unique(b$state))
+    states <- if (min(n_a, n_b) >= 8) {
+      union(a$state, b$state)
+    } else if (n_b <= n_a) {
       unique(b$state)
     } else {
       unique(a$state)
@@ -547,6 +566,26 @@ check_meer_table <- function(joined, values) {
     dplyr::arrange(state, key)
 }
 
+# The elevations of the meer wells: one row per meer well with the IDs, the
+# ground elevation (and measuring point) of every source side by side and
+# the difference between every pair of sources (<field>_<second>_minus_
+# <first>, e.g. elev_gs_farm_minus_gw_base, elev_gs_dem_minus_meer).
+check_meer_elevation <- function(meer) {
+  sources <- c("gw_base", "meer", "farm", "states", "dem")
+  ids <- intersect(c("state", "meer_file", "meer_id", "well_id", "farm_id", "states_id"), names(meer))
+  out <- meer[, ids]
+  for (f in c("elev_gs", "elev_mp")) {
+    have <- sources[paste0(f, "_", sources) %in% names(meer)]
+    if (length(have) == 0) next
+    for (s in have) out[[paste0(f, "_", s)]] <- meer[[paste0(f, "_", s)]]
+    if (length(have) < 2) next
+    for (p in utils::combn(have, 2, simplify = FALSE)) {
+      out[[paste0(f, "_", p[2], "_minus_", p[1])]] <- meer[[paste0(f, "_", p[2])]] - meer[[paste0(f, "_", p[1])]]
+    }
+  }
+  out
+}
+
 check_class_colours <- c(
   "up to 1 cm" = "#1B998B", "up to 10 cm" = "#8CC7BD", "up to 1 m" = "#F0A202",
   "up to 5 m" = "#E4572E", "over 5 m" = "#83053C",
@@ -599,12 +638,14 @@ check_meer_long <- function(meer) {
 # matching, the ID pairs used, the ID overlap per pair of sources and state,
 # all values side by side, the meer table and its large differences.
 # Returns the paths.
-write_check_tables <- function(sources, matching, pairs, joined, values, overlap, meer, settings) {
+write_check_tables <- function(sources, matching, pairs, joined, values, overlap, meer, meer_elevation,
+                               settings) {
   dir <- file.path("output", "source_check")
   dir.create(dir, showWarnings = FALSE, recursive = TRUE)
   links <- joined$rows |>
     dplyr::summarise(
-      rows = dplyr::n(), without_id = sum(is.na(key)), linked_to_gw_base = sum(matched),
+      rows = dplyr::n(), without_id = sum(is.na(key)), without_state = sum(is.na(state)),
+      linked_to_gw_base = sum(matched),
       gwbase_duplicates = sum(gwbase_duplicates > 1, na.rm = TRUE),
       median_distance_m = stats::median(distance_m, na.rm = TRUE),
       over_100_m = sum(distance_m > 100, na.rm = TRUE),
@@ -627,7 +668,8 @@ write_check_tables <- function(sources, matching, pairs, joined, values, overlap
     dplyr::arrange(dplyr::desc(abs(difference)))
   files <- list(
     column_mapping = sources$report, id_matching = matching, id_pairs = links,
-    id_overlap = overlap, values = wide, meer_wells = meer, meer_large_differences = large
+    id_overlap = overlap, values = wide, meer_wells = meer, meer_elevation = meer_elevation,
+    meer_large_differences = large
   )
   vapply(names(files), function(name) {
     path <- file.path(dir, paste0(name, ".csv"))
@@ -651,7 +693,7 @@ plot_check_overlap <- function(overlap, plot_config, font) {
     ) |>
     dplyr::mutate(state = factor(state, levels = rev(sort(unique(state)))))
   p <- ggplot2::ggplot(d, ggplot2::aes(share, state, fill = part)) +
-    ggplot2::geom_col(width = 0.75, position = ggplot2::position_stack(reverse = TRUE)) +
+    ggplot2::geom_col(width = 0.75, position = ggplot2::position_stack(reverse = TRUE), show.legend = TRUE) +
     ggplot2::geom_text(
       ggplot2::aes(label = ifelse(share >= 0.1, label_n(n), "")),
       position = ggplot2::position_stack(vjust = 0.5, reverse = TRUE),
@@ -674,7 +716,7 @@ plot_check_overlap <- function(overlap, plot_config, font) {
         "Per pair of sources and state: wells ", colour_word("in both", "#2E86AB"),
         ", only in the ", colour_word("left", "#F0A202"), " or only in the ",
         colour_word("right", "#E4572E"), " source, linked by state and ID (state ",
-        "prefix such as HE_, punctuation and leading zeros removed). A bar mostly ",
+        "prefix such as HE_ removed). A bar mostly ",
         "orange and red means the IDs do not match."
       ),
       caption = check_caption,
@@ -688,6 +730,55 @@ plot_check_overlap <- function(overlap, plot_config, font) {
   )
 }
 
+# The wells of the meer files: per state the share found in gw_base, FARM
+# and the state data
+plot_check_overlap_meer <- function(meer, plot_config, font) {
+  if (nrow(meer) == 0) return(character(0))
+  colours <- c("found" = "#2E86AB", "not found" = "#E4572E")
+  labels <- c(in_gw_base = "gw_base", in_farm = "FARM", in_states = "states")
+  d <- meer |>
+    dplyr::select(state, dplyr::all_of(names(labels))) |>
+    tidyr::pivot_longer(-state, names_to = "source", values_to = "found") |>
+    dplyr::mutate(
+      source = factor(labels[source], levels = rev(labels)),
+      found = factor(ifelse(found, "found", "not found"), levels = names(colours))
+    ) |>
+    dplyr::count(state, source, found) |>
+    dplyr::mutate(share = n / sum(n), .by = c(state, source))
+  p <- ggplot2::ggplot(d, ggplot2::aes(share, source, fill = found)) +
+    ggplot2::geom_col(width = 0.75, position = ggplot2::position_stack(reverse = TRUE), show.legend = TRUE) +
+    ggplot2::geom_text(
+      ggplot2::aes(label = ifelse(share >= 0.06, label_n(n), "")),
+      position = ggplot2::position_stack(vjust = 0.5, reverse = TRUE),
+      family = font, size = 3, colour = "white"
+    ) +
+    ggplot2::scale_fill_manual(values = colours, name = NULL, drop = FALSE) +
+    ggplot2::scale_x_continuous(labels = scales::label_percent(), breaks = c(0, 0.5, 1), expand = ggplot2::expansion(0)) +
+    ggplot2::facet_wrap(ggplot2::vars(state), ncol = 1, strip.position = "left") +
+    ggplot2::labs(x = "Share of the meer wells (numbers: wells)", y = NULL) +
+    theme_charts(font, base_size = 11) +
+    ggplot2::theme(
+      panel.grid.major.y = ggplot2::element_blank(),
+      strip.text.y.left = ggplot2::element_text(face = "bold", angle = 0),
+      strip.placement = "outside", legend.position = "top"
+    )
+  figure <- patchwork::wrap_plots(p) +
+    patchwork::plot_annotation(
+      title = "Are the meer wells found in the other sources?",
+      subtitle = paste0(
+        "Per state: share of the wells in the meer files ", colour_word("found", "#2E86AB"),
+        " or ", colour_word("not found", "#E4572E"), " in gw_base, FARM and the state ",
+        "data, by state and ID (state prefix such as HE_ removed)."
+      ),
+      caption = check_caption,
+      theme = theme_maps(font)
+    )
+  save_figure(
+    figure, file.path(plot_config$dir, "source_check", "id_overlap_meer.png"),
+    width = figure_width, height = 3 + 0.95 * length(unique(d$state))
+  )
+}
+
 # The meer wells: per field, source and state the share of wells by size of
 # the difference to gw_base
 plot_check_meer <- function(meer, plot_config, font) {
@@ -697,7 +788,7 @@ plot_check_meer <- function(meer, plot_config, font) {
     dplyr::mutate(share = n / sum(n), .by = c(state, field_label, comparison))
   totals <- dplyr::count(d, state, field_label, comparison)
   p <- ggplot2::ggplot(counts, ggplot2::aes(share, comparison, fill = class)) +
-    ggplot2::geom_col(width = 0.75, position = ggplot2::position_stack(reverse = TRUE)) +
+    ggplot2::geom_col(width = 0.75, position = ggplot2::position_stack(reverse = TRUE), show.legend = TRUE) +
     ggplot2::geom_text(
       ggplot2::aes(x = 1.03, y = comparison, label = label_n(n)),
       data = totals, inherit.aes = FALSE, hjust = 0, family = font, size = 2.4, colour = "grey40"
@@ -750,7 +841,7 @@ plot_check_meer_map <- function(meer, germany, plot_config, font) {
   pad <- 20000
   p <- ggplot2::ggplot() +
     ggplot2::geom_sf(data = germany, fill = "grey95", colour = "grey70", linewidth = 0.2) +
-    ggplot2::geom_point(ggplot2::aes(x, y, colour = class), data = d, size = 0.9, stroke = 0) +
+    ggplot2::geom_point(ggplot2::aes(x, y, colour = class), data = d, size = 0.9, stroke = 0, show.legend = TRUE) +
     ggplot2::scale_colour_manual(values = check_class_colours, name = NULL, drop = FALSE) +
     ggplot2::coord_sf(
       datum = NA, crs = sf::st_crs(germany),
@@ -774,12 +865,13 @@ plot_check_meer_map <- function(meer, germany, plot_config, font) {
 }
 
 # All outputs of the check; returns the paths.
-write_source_check <- function(sources, matching, pairs, joined, values, overlap, meer, settings,
-                               germany, plot_config, font = setup_plot_font(plot_config$font)) {
+write_source_check <- function(sources, matching, pairs, joined, values, overlap, meer, meer_elevation,
+                               settings, germany, plot_config, font = setup_plot_font(plot_config$font)) {
   setup_plot_font(plot_config$font)
   c(
-    write_check_tables(sources, matching, pairs, joined, values, overlap, meer, settings),
+    write_check_tables(sources, matching, pairs, joined, values, overlap, meer, meer_elevation, settings),
     plot_check_overlap(overlap, plot_config, font),
+    plot_check_overlap_meer(meer, plot_config, font),
     plot_check_meer(meer, plot_config, font),
     plot_check_meer_map(meer, germany, plot_config, font)
   )

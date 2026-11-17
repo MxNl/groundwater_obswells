@@ -295,11 +295,15 @@ list(
   # the meer wells with the values of all sources side by side (one row per
   # well; look at it with tar_read(check_meer))
   tar_target(check_meer, check_meer_table(check_joined, check_values_long)),
+  # the meer wells with the elevations of all sources side by side and the
+  # differences between every pair of sources (tar_read(check_meer_elevation))
+  tar_target(check_meer_elevation, check_meer_elevation(check_meer)),
   tar_target(
     check_outputs,
     write_source_check(
       check_sources, check_matching, check_pairs, check_joined, check_values_long,
-      check_overlap, check_meer, check_settings, germany, plot_config, plot_font
+      check_overlap, check_meer, check_meer_elevation, check_settings, germany, plot_config,
+      plot_font
     ),
     format = "file"
   )
