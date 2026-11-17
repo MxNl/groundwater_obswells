@@ -756,7 +756,7 @@ plot_check_overlap <- function(overlap, plot_config, font) {
     ) |>
     dplyr::mutate(state = factor(state, levels = rev(sort(unique(state)))))
   p <- ggplot2::ggplot(d, ggplot2::aes(share, state, fill = part)) +
-    ggplot2::geom_col(width = 0.75, position = ggplot2::position_stack(reverse = TRUE), show.legend = TRUE) +
+    ggplot2::geom_col(width = 0.75, position = ggplot2::position_stack(reverse = TRUE), show.legend = FALSE) +
     ggplot2::geom_text(
       ggplot2::aes(label = ifelse(share >= 0.1, label_n(n), "")),
       position = ggplot2::position_stack(vjust = 0.5, reverse = TRUE),
@@ -770,7 +770,7 @@ plot_check_overlap <- function(overlap, plot_config, font) {
     ggplot2::theme(
       panel.grid.major.y = ggplot2::element_blank(),
       strip.text = ggplot2::element_text(face = "bold", hjust = 0),
-      legend.position = "top", panel.spacing.x = grid::unit(1.5, "lines")
+      panel.spacing.x = grid::unit(1.5, "lines")
     )
   figure <- patchwork::wrap_plots(p) +
     patchwork::plot_annotation(
@@ -789,7 +789,7 @@ plot_check_overlap <- function(overlap, plot_config, font) {
   n_rows <- sum(stats::aggregate(rows$n, list(ceiling(seq_along(rows$n) / 2)), max)$x)
   save_figure(
     figure, file.path(plot_config$dir, "source_check", "id_overlap.png"),
-    width = figure_width, height = 3 + 0.26 * n_rows + 0.45 * ceiling(nrow(rows) / 2)
+    width = figure_width, height = 2.6 + 0.26 * n_rows + 0.45 * ceiling(nrow(rows) / 2)
   )
 }
 
@@ -809,7 +809,7 @@ plot_check_overlap_meer <- function(meer, plot_config, font) {
     dplyr::count(state, source, found) |>
     dplyr::mutate(share = n / sum(n), .by = c(state, source))
   p <- ggplot2::ggplot(d, ggplot2::aes(share, source, fill = found)) +
-    ggplot2::geom_col(width = 0.75, position = ggplot2::position_stack(reverse = TRUE), show.legend = TRUE) +
+    ggplot2::geom_col(width = 0.75, position = ggplot2::position_stack(reverse = TRUE), show.legend = FALSE) +
     ggplot2::geom_text(
       ggplot2::aes(label = ifelse(share >= 0.06, label_n(n), "")),
       position = ggplot2::position_stack(vjust = 0.5, reverse = TRUE),
@@ -823,7 +823,7 @@ plot_check_overlap_meer <- function(meer, plot_config, font) {
     ggplot2::theme(
       panel.grid.major.y = ggplot2::element_blank(),
       strip.text.y.left = ggplot2::element_text(face = "bold", angle = 0),
-      strip.placement = "outside", legend.position = "top"
+      strip.placement = "outside"
     )
   figure <- patchwork::wrap_plots(p) +
     patchwork::plot_annotation(
@@ -838,7 +838,7 @@ plot_check_overlap_meer <- function(meer, plot_config, font) {
     )
   save_figure(
     figure, file.path(plot_config$dir, "source_check", "id_overlap_meer.png"),
-    width = figure_width, height = 3 + 0.95 * length(unique(d$state))
+    width = figure_width, height = 2.6 + 0.95 * length(unique(d$state))
   )
 }
 
