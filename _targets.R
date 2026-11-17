@@ -129,24 +129,25 @@ list(
   # and the bottom bot_below_min to bot_below_max m below the mean water
   # table; not falling dry (screen bottom deeper than the typical annual
   # low); screen length from screen_length_min to screen_length_max.
-  # NA: no limit.
+  # NA: no limit. The order of the rows is the order in the plots (the
+  # fitted scenario "Even coverage" follows last).
   tar_target(
     scenarios_fixed,
     tibble::tribble(
       ~id, ~name, ~dtw_mean_min, ~dtw_mean_max, ~dtw_max, ~screen_rule, ~top_below_max,
         ~bot_below_min, ~bot_below_max, ~screen_length_min, ~screen_length_max, ~colour, ~purpose,
-      "farm_strict", "FARM strict", 1, 5, 10, "below", 2, NA, NA, NA, 2, "#E4572E",
-        "Shallow groundwater and a short screen just below the water table (FARM, strict).",
+      "national_2020", "National (2020)", 1, 5, 10, "below", 3, NA, 4, 1, 2, "#B5446E",
+        "National criteria (2020): screen top 0-2 m (at most 3 m) below the water table, screen 1-2 m long, bottom at most 4 m below the water table.",
       "farm_tolerant", "FARM tolerant", 1, 5, 10, "below", 3, NA, NA, NA, 4, "#F0A202",
         "As FARM strict, but with the screen top up to 3 m below the water table and screens up to 4 m (FARM, tolerant).",
+      "eu_efsa_2023", "EU (EFSA 2023)", 1, 5, 10, "none", NA, 1, 2, 1, 2, "#3D5A80",
+        "EU criteria (EFSA 2023): screen 1-2 m long with the bottom 1-2 m below the water table, so it reaches up to the water table.",
+      "farm_strict", "FARM strict", 1, 5, 10, "below", 2, NA, NA, NA, 2, "#E4572E",
+        "Shallow groundwater and a short screen just below the water table (FARM, strict).",
       "very_shallow", "Very shallow", 0.5, 3, 5, "below", 1, NA, NA, NA, 2, "#1B998B",
         "Groundwater within 3 m of the surface, which seepage water reaches fastest, and a short screen right below the water table.",
       "screen_at_water_table", "Screen at the water table", 1, 5, 10, "spans", NA, NA, NA, NA, 3, "#2E86AB",
-        "Screens across the water table sample the uppermost, youngest groundwater, where substances from the surface arrive first.",
-      "national_2020", "National (2020)", 1, 5, 10, "below", 3, NA, 4, 1, 2, "#B5446E",
-        "National criteria (2020): screen top 0-2 m (at most 3 m) below the water table, screen 1-2 m long, bottom at most 4 m below the water table.",
-      "eu_efsa_2023", "EU (EFSA 2023)", 1, 5, 10, "none", NA, 1, 2, 1, 2, "#3D5A80",
-        "EU criteria (EFSA 2023): screen 1-2 m long with the bottom 1-2 m below the water table, so it reaches up to the water table."
+        "Screens across the water table sample the uppermost, youngest groundwater, where substances from the surface arrive first."
     )
   ),
   # Scenario fitted to the data for wells across all of Germany, also in the

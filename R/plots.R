@@ -630,10 +630,10 @@ plot_sankeys <- function(wells, scenarios, steps, spec, plot_config,
 
 # One Sankey diagram from the metadata through the preprocessing to the
 # scenarios. Scenarios overlap (FARM strict is part of FARM tolerant), so at
-# the end every usable well goes to one group only: the first scenario in
-# the order of the scenarios table it meets, or none. The labels give the
-# wells of the group and, where earlier scenarios took some of its wells,
-# the scenario's total.
+# the end every usable well goes to one group only: the most selective
+# scenario it meets (assign_scenario_groups()), or none. The labels give the
+# wells of the group and, where more selective scenarios took some of its
+# wells, the scenario's total.
 plot_sankey_combined <- function(wells, scenarios, scenario_wells, steps, spec, plot_config,
                                  font = setup_plot_font(plot_config$font)) {
   setup_plot_font(plot_config$font)
@@ -745,7 +745,7 @@ plot_sankey_combined <- function(wells, scenarios, scenario_wells, steps, spec, 
       subtitle = paste0(
         "The band shows the wells left after each step, the grey branches ",
         "the wells dropped. At the end, each usable well is counted once, in ",
-        "the first scenario it meets (in the order of the list)."
+        "the most selective scenario it meets (the one with the fewest wells)."
       ),
       caption = plot_config$caption
     ) +

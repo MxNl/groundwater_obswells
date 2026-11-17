@@ -65,7 +65,7 @@ The figures are written to `plots/`: `flowchart.png`,
 `sankey_wells.png` (where the wells drop out on the way to the usable
 wells), `sankey_scenarios.png` (the same for the criteria of each scenario),
 `sankey_combined.png` (preprocessing and scenarios in one diagram; each
-usable well is counted once, in the first scenario of the list it meets),
+usable well is counted once, in the most selective scenario it meets),
 `missing_screen_depths.png` (where screen depths are missing, per state),
 `scenario_optimisation.png` (the cells covered by the "Even coverage"
 scenario and how its thresholds were fitted),

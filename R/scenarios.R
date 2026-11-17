@@ -159,10 +159,15 @@ wells_to_points <- function(wells, crs = NULL, crs_target = 25832) {
 
 # One scenario per usable well, so the wells can be split into groups that do
 # not overlap (scenarios do overlap: FARM strict is part of FARM tolerant):
-# the first scenario in the order of the scenarios table that the well
-# meets, or "none". Returns well_id, scenario_id and the group label.
+# of the scenarios the well meets, the most selective one (fewest selected
+# wells; with equal numbers the earlier in the scenarios table), or "none".
+# So a scenario within another keeps its own group, whatever the order of
+# the table (which sets the order in the plots). Returns well_id and
+# scenario_id.
 assign_scenario_groups <- function(scenario_wells, scenarios) {
-  order <- match(scenario_wells$scenario_id, scenarios$id)
+  n_selected <- tapply(scenario_wells$selected, scenario_wells$scenario_id, sum)
+  priority <- order(order(n_selected[scenarios$id], seq_along(scenarios$id)))
+  order <- priority[match(scenario_wells$scenario_id, scenarios$id)]
   first <- scenario_wells |>
     dplyr::mutate(order = order) |>
     dplyr::filter(selected) |>

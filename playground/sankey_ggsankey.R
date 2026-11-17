@@ -6,7 +6,7 @@
 # Every well is one row with its node at each step: "kept" while it stays,
 # the reason at the step where it drops out, NA afterwards (ggsankey ends
 # the flow there). At the end the usable wells go to their scenario group
-# (first scenario of the list they meet), as in plot_sankey_combined().
+# (the most selective scenario they meet), as in plot_sankey_combined().
 
 library(targets)
 library(dplyr)
