@@ -6,45 +6,64 @@
 #      dtw_mean_max
 #   2. dtw_max: maximum depth to groundwater (dtw_deepest, deepest monthly
 #      mean in the mean window) less than dtw_max
-#   3. screen_top: position of the screen top relative to the mean water
-#      table, by screen_rule:
+#   3. screen_top (screen position): the screen top relative to the mean
+#      water table, by screen_rule:
 #      - "below": below the mean water table, at most top_below_max m deeper
 #        (dtw_mean <= screen_top <= dtw_mean + top_below_max)
 #      - "spans": above the mean water table (screen_top <= dtw_mean), so the
 #        screen reaches across it
+#      - "none": no rule for the top
+#      and, where given, the screen bottom bot_below_min to bot_below_max m
+#      below the mean water table (screen_bot - dtw_mean)
 #   4. not_dry: the screen bottom is deeper than the typical annual low
 #      (screen_bot >= dtw_annual_low), so the well does not fall dry in the
 #      annual cycle. dtw_annual_low = elev_gs - the lowest monthly mean level
 #      of each year of the mean window, averaged over the years
-#   5. screen_length: screen length (screen_bot - screen_top) above 0 and up
-#      to screen_length_max
+#   5. screen_length: screen length (screen_bot - screen_top) above 0, at
+#      least screen_length_min (where given) and up to screen_length_max
+# Optional columns (bot_below_min, bot_below_max, screen_length_min): NA or
+# missing means no limit.
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
 scenario_criteria <- c(
   dtw_mean = "mean depth to groundwater",
   dtw_max = "maximum depth to groundwater",
-  screen_top = "screen top position",
+  screen_top = "screen position",
   not_dry = "screen bottom below the annual low",
   screen_length = "screen length"
 )
 
+# An optional threshold of scenario `s`: NA where the column is missing or
+# empty (no limit).
+scenario_value <- function(s, name) {
+  if (!name %in% names(s)) NA_real_ else as.numeric(s[[name]][1])
+}
+
 # Whether each well meets each criterion of scenario `s` (one row of the
 # scenarios table); `base` are the usable wells.
 scenario_checks <- function(base, s) {
-  screen_top <- switch(
+  top_ok <- switch(
     s$screen_rule,
     below = base$screen_top >= base$dtw_mean &
       base$screen_top <= base$dtw_mean + s$top_below_max,
     spans = base$screen_top <= base$dtw_mean,
+    none = rep(TRUE, nrow(base)),
     stop("Unknown screen_rule: ", s$screen_rule, call. = FALSE)
   )
+  bot_min <- scenario_value(s, "bot_below_min")
+  bot_max <- scenario_value(s, "bot_below_max")
+  bot_below <- base$screen_bot - base$dtw_mean
+  bot_ok <- (is.na(bot_min) | bot_below >= bot_min) & (is.na(bot_max) | bot_below <= bot_max)
+  length_min <- scenario_value(s, "screen_length_min")
   tibble::tibble(
     dtw_mean = base$dtw_mean >= s$dtw_mean_min & base$dtw_mean <= s$dtw_mean_max,
     dtw_max = base$dtw_deepest < s$dtw_max,
-    screen_top = screen_top,
+    screen_top = top_ok & bot_ok,
     not_dry = base$screen_bot >= base$dtw_annual_low,
-    screen_length = base$screen_length > 0 & base$screen_length <= s$screen_length_max
+    screen_length = base$screen_length > 0 &
+      (is.na(length_min) | base$screen_length >= length_min) &
+      base$screen_length <= s$screen_length_max
   ) |>
     dplyr::mutate(dplyr::across(dplyr::everything(), \(x) x %in% TRUE))
 }

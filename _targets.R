@@ -123,23 +123,30 @@ list(
   # Scenarios -----------------------------------------------------------------------
   # Each scenario filters the usable wells by five criteria (m below
   # ground), in this order: mean depth to groundwater between dtw_mean_min
-  # and dtw_mean_max; maximum depth below dtw_max; screen top position
-  # (screen_rule "below": 0 to top_below_max m below the mean water table;
-  # "spans": above it, so the screen reaches across); not falling dry (screen
-  # bottom deeper than the typical annual low); screen length up to
-  # screen_length_max.
+  # and dtw_mean_max; maximum depth below dtw_max; screen position: the top
+  # by screen_rule ("below": 0 to top_below_max m below the mean water
+  # table; "spans": above it, so the screen reaches across; "none": no rule)
+  # and the bottom bot_below_min to bot_below_max m below the mean water
+  # table; not falling dry (screen bottom deeper than the typical annual
+  # low); screen length from screen_length_min to screen_length_max.
+  # NA: no limit.
   tar_target(
     scenarios_fixed,
     tibble::tribble(
-      ~id, ~name, ~dtw_mean_min, ~dtw_mean_max, ~dtw_max, ~screen_rule, ~top_below_max, ~screen_length_max, ~colour, ~purpose,
-      "farm_strict", "FARM strict", 1, 5, 10, "below", 2, 2, "#E4572E",
+      ~id, ~name, ~dtw_mean_min, ~dtw_mean_max, ~dtw_max, ~screen_rule, ~top_below_max,
+        ~bot_below_min, ~bot_below_max, ~screen_length_min, ~screen_length_max, ~colour, ~purpose,
+      "farm_strict", "FARM strict", 1, 5, 10, "below", 2, NA, NA, NA, 2, "#E4572E",
         "Shallow groundwater and a short screen just below the water table (FARM, strict).",
-      "farm_tolerant", "FARM tolerant", 1, 5, 10, "below", 3, 4, "#F0A202",
+      "farm_tolerant", "FARM tolerant", 1, 5, 10, "below", 3, NA, NA, NA, 4, "#F0A202",
         "As FARM strict, but with the screen top up to 3 m below the water table and screens up to 4 m (FARM, tolerant).",
-      "very_shallow", "Very shallow", 0.5, 3, 5, "below", 1, 2, "#1B998B",
+      "very_shallow", "Very shallow", 0.5, 3, 5, "below", 1, NA, NA, NA, 2, "#1B998B",
         "Groundwater within 3 m of the surface, which seepage water reaches fastest, and a short screen right below the water table.",
-      "screen_at_water_table", "Screen at the water table", 1, 5, 10, "spans", NA, 3, "#2E86AB",
-        "Screens across the water table sample the uppermost, youngest groundwater, where substances from the surface arrive first."
+      "screen_at_water_table", "Screen at the water table", 1, 5, 10, "spans", NA, NA, NA, NA, 3, "#2E86AB",
+        "Screens across the water table sample the uppermost, youngest groundwater, where substances from the surface arrive first.",
+      "national_2020", "National (2020)", 1, 5, 10, "below", 3, NA, 4, 1, 2, "#B5446E",
+        "National criteria (2020): screen top 0-2 m (at most 3 m) below the water table, screen 1-2 m long, bottom at most 4 m below the water table.",
+      "eu_efsa_2023", "EU (EFSA 2023)", 1, 5, 10, "none", NA, 1, 2, 1, 2, "#3D5A80",
+        "EU criteria (EFSA 2023): screen 1-2 m long with the bottom 1-2 m below the water table, so it reaches up to the water table."
     )
   ),
   # Scenario fitted to the data for wells across all of Germany, also in the

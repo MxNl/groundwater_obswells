@@ -26,14 +26,23 @@ scenario_properties <- c(
 # depth to the largest plus top_below_max, "spans" from 0 to the largest
 # mean depth.
 scenario_ranges <- function(s) {
+  bot_min <- scenario_value(s, "bot_below_min")
+  bot_max <- scenario_value(s, "bot_below_max")
+  length_min <- dplyr::coalesce(scenario_value(s, "screen_length_min"), 0)
   top <- if (s$screen_rule == "below") {
     c(s$dtw_mean_min, s$dtw_mean_max + s$top_below_max)
-  } else {
+  } else if (s$screen_rule == "spans") {
     c(0, s$dtw_mean_max)
+  } else {
+    # "none": the top only follows from the bottom rule and the length
+    c(max(0, s$dtw_mean_min + dplyr::coalesce(bot_min, 0) - s$screen_length_max),
+      s$dtw_mean_max + dplyr::coalesce(bot_max, s$dtw_max) - length_min)
   }
+  # a bottom limit can narrow the top range further
+  if (!is.na(bot_max)) top[2] <- min(top[2], s$dtw_mean_max + bot_max - length_min)
   tibble::tibble(
     property = factor(names(scenario_properties), levels = rev(names(scenario_properties))),
-    from = c(s$dtw_mean_min, 0, top[1], 0),
+    from = c(s$dtw_mean_min, 0, top[1], length_min),
     to = c(s$dtw_mean_max, s$dtw_max, top[2], s$screen_length_max)
   )
 }
@@ -41,17 +50,34 @@ scenario_ranges <- function(s) {
 # The five criteria of a scenario in short words, for boxes and lists.
 scenario_step_labels <- function(s, sep = "\n") {
   m <- function(x) format(x, decimal.mark = ".", trim = TRUE)
-  screen <- if (s$screen_rule == "below") {
-    paste0("Screen top 0\u2013", m(s$top_below_max), " m", sep, "below the water table")
-  } else {
-    paste0("Screen top above", sep, "the water table")
+  range_text <- function(lo, hi) {
+    if (is.na(lo)) paste0("\u2264 ", m(hi), " m") else if (is.na(hi)) paste0("\u2265 ", m(lo), " m")
+    else paste0(m(lo), "\u2013", m(hi), " m")
   }
+  bot_min <- scenario_value(s, "bot_below_min")
+  bot_max <- scenario_value(s, "bot_below_max")
+  bottom <- if (is.na(bot_min) && is.na(bot_max)) NULL else range_text(bot_min, bot_max)
+  screen <- switch(
+    s$screen_rule,
+    below = if (is.null(bottom)) {
+      paste0("Screen top 0\u2013", m(s$top_below_max), " m", sep, "below the water table")
+    } else {
+      paste0("Top 0\u2013", m(s$top_below_max), " m, bottom ", bottom, sep, "below the water table")
+    },
+    spans = if (is.null(bottom)) {
+      paste0("Screen top above", sep, "the water table")
+    } else {
+      paste0("Screen top above the water", sep, "table, bottom ", bottom, " below")
+    },
+    none = paste0("Screen bottom ", bottom %||% "anywhere", sep, "below the water table")
+  )
+  length_min <- scenario_value(s, "screen_length_min")
   c(
     dtw_mean = paste0("Mean depth", sep, m(s$dtw_mean_min), "\u2013", m(s$dtw_mean_max), " m"),
     dtw_max = paste0("Maximum depth", sep, "< ", m(s$dtw_max), " m"),
     screen_top = screen,
     not_dry = paste0("Not falling dry: bottom", sep, "below the annual low"),
-    screen_length = paste0("Screen length", sep, "\u2264 ", m(s$screen_length_max), " m")
+    screen_length = paste0("Screen length", sep, range_text(length_min, s$screen_length_max))
   )
 }
 
@@ -552,15 +578,15 @@ plot_sankeys <- function(wells, scenarios, steps, spec, plot_config,
     st <- steps[steps$scenario_id == s$id, ]
     lab <- scenario_step_labels(s, sep = " ")
     sc_stages <- tibble::tibble(
-      short = c("Usable\nwells", "Mean\ndepth", "Maximum\ndepth", "Screen\ntop", "Not\ndry", "Screen\nlength"),
+      short = c("Usable\nwells", "Mean\ndepth", "Maximum\ndepth", "Screen\nposition", "Not\ndry", "Screen\nlength"),
       n = c(st$usable, scenario_step_counts(st)),
       reason = c(
         NA,
         paste0("mean not ", sub("Mean depth ", "", lab[["dtw_mean"]])),
         paste0("maximum \u2265 ", s$dtw_max, " m"),
-        if (s$screen_rule == "below") "screen top not right below the water table" else "screen top not above the water table",
+        paste("not:", tolower(lab[["screen_top"]])),
         "falls dry at the annual low",
-        paste0("screen > ", s$screen_length_max, " m")
+        paste("not:", tolower(lab[["screen_length"]]))
       )
     )
     sankey_plot(sc_stages, s$colour, font, title = paste0(s$name, ": ", label_n(st$screen_length), " wells"),
@@ -592,9 +618,10 @@ plot_sankeys <- function(wells, scenarios, steps, spec, plot_config,
       caption = plot_config$caption,
       theme = theme_maps(font)
     )
+  # about 3.2 in per row of two scenarios, so labels and titles keep apart
   path_scenarios <- save_figure(
     scenarios_plot, file.path(plot_config$dir, "sankey_scenarios.png"),
-    width = figure_width, height = 10
+    width = figure_width, height = 1 + 3.2 * ceiling(length(per_scenario) / 2)
   )
   c(path_overview, path_scenarios)
 }
@@ -1019,11 +1046,12 @@ method_steps <- function(spec, coverage) {
       paste0("Each season (winter, spring, summer, autumn) has data in at least ",
              spec$min_years_per_season, " of the ", spec$recent_years, " years."),
     "Scenarios", "Five criteria, one after the other",
-      paste0("(1) Mean depth range, (2) maximum depth, (3) screen top relative to the mean ",
+      paste0("(1) Mean depth range, (2) maximum depth, (3) screen position (top and/or bottom) relative to the mean ",
              "water table, (4) not falling dry: screen bottom below the annual low, ",
              "(5) screen length."),
     "Scenarios", "Fixed and fitted thresholds",
-      paste0("FARM strict and tolerant, very shallow, screen at the water table: fixed. ",
+      paste0("FARM strict and tolerant, very shallow, screen at the water table, National (2020), ",
+             "EU (EFSA 2023): fixed. ",
              "Even coverage: the strictest thresholds whose wells still cover ",
              100 * coverage$keep_share, " % of the ", coverage$cell_km,
              " km cells the loosest ones cover.")

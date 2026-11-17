@@ -32,7 +32,7 @@ sample_diagnostic_wells <- function(wells, scenario_wells, settings) {
 # criterion it fails.
 scenario_results <- function(well_id, scenario_wells, scenarios) {
   criteria <- c(
-    dtw_mean = "mean depth", dtw_max = "maximum depth", screen_top = "screen top",
+    dtw_mean = "mean depth", dtw_max = "maximum depth", screen_top = "screen position",
     not_dry = "falls dry", screen_length = "screen length"
   )
   rows <- scenario_wells[scenario_wells$well_id == well_id, ]

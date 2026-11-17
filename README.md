@@ -180,21 +180,28 @@ ground surface, in this order:
 1. mean depth to groundwater between `dtw_mean_min` and `dtw_mean_max`
 2. maximum depth to groundwater (deepest monthly mean of the mean window)
    less than `dtw_max`
-3. screen top position (`screen_rule`): `below` = 0 to `top_below_max` m
-   below the mean water table; `spans` = above it, so the screen reaches
-   across the water table
+3. screen position: the top by `screen_rule` (`below` = 0 to
+   `top_below_max` m below the mean water table; `spans` = above it, so the
+   screen reaches across the water table; `none` = no rule for the top),
+   and where given the bottom `bot_below_min` to `bot_below_max` m below the
+   mean water table
 4. not falling dry: the screen bottom is deeper than the typical annual low
    (`dtw_annual_low` = ground surface minus the lowest monthly mean level of
    each year of the mean window, averaged over the years)
-5. screen length up to `screen_length_max`
+5. screen length from `screen_length_min` (where given) up to
+   `screen_length_max`
 
-| Scenario | Mean depth | Max depth | Screen top | Length |
-|---|---|---|---|---|
-| FARM strict | 1-5 m | < 10 m | 0-2 m below the water table | <= 2 m |
-| FARM tolerant | 1-5 m | < 10 m | 0-3 m below the water table | <= 4 m |
-| Very shallow | 0.5-3 m | < 5 m | 0-1 m below the water table | <= 2 m |
-| Screen at the water table | 1-5 m | < 10 m | above the water table | <= 3 m |
-| Even coverage | fitted | fitted | fitted | fitted |
+Empty values (NA) mean no limit.
+
+| Scenario | Mean depth | Max depth | Screen top | Screen bottom | Length |
+|---|---|---|---|---|---|
+| FARM strict | 1-5 m | < 10 m | 0-2 m below the water table | - | <= 2 m |
+| FARM tolerant | 1-5 m | < 10 m | 0-3 m below the water table | - | <= 4 m |
+| Very shallow | 0.5-3 m | < 5 m | 0-1 m below the water table | - | <= 2 m |
+| Screen at the water table | 1-5 m | < 10 m | above the water table | - | <= 3 m |
+| National (2020) | 1-5 m | < 10 m | 0-3 m below the water table | <= 4 m below the water table | 1-2 m |
+| EU (EFSA 2023) | 1-5 m | < 10 m | - | 1-2 m below the water table | 1-2 m |
+| Even coverage | fitted | fitted | fitted | - | fitted |
 
 In all scenarios the screen bottom must be deeper than the annual low.
 
