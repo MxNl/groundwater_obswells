@@ -335,6 +335,13 @@ in `R/link.R`). Needs the package readxl.
   `elev_gs_dem_minus_meer`, ...). `values.csv` has the values of all wells of all
   sources side by side.
 
+## Decision records
+
+The decisions behind the data and methods (wells and linking, level checks,
+windows, spikes, usable wells, scenarios, workflow) are recorded in
+[`docs/adr/`](docs/adr/README.md), one file per decision, in the same format
+as in the other projects.
+
 ## Planned
 
 - Ground surface elevation: where `elev_gs` is still missing after the
