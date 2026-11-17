@@ -256,9 +256,11 @@ Needs the package readxl.
   state's file). Case, umlauts, spaces and signs in the names do not matter.
   `output/source_check/column_mapping.csv` shows which column was found.
 - IDs: the wells of all sources are linked by state and ID. A state prefix
-  (`HE_`, `HE-`), spaces and leading zeros are removed first, other signs
-  are kept: `HE_00001000`, `00001000` and `1000` (in Hessen) are the same
-  well. The state comes from the file name, a state column (codes
+  (`HE_`, `HE-`), all signs other than letters and digits (spaces, `-`,
+  `/`, `.`) and leading zeros are removed first: `HE_00001000`, `00001000`
+  and `1000` (in Hessen) are the same well. `id_examples.csv` lists per
+  source and state IDs found only in the source or only in gw_base, as
+  written and as compared, to see why IDs do not match. The state comes from the file name, a state column (codes
   or names, also within longer names such as "Freie und Hansestadt Hamburg";
   values not recognised are reported as a warning) or the ID prefix. As a
   check, every gw_base column with text or whole numbers is also tried

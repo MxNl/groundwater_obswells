@@ -95,8 +95,9 @@ norm_state <- function(x) {
 }
 
 # IDs comparable across sources: upper case, a leading state code with a
-# separator ("HE_", "HE-", "HE "), spaces and leading zeros removed; other
-# signs are kept: "HE_00001000", "00001000" and "1000" all give "1000". The
+# separator ("HE_", "HE-", "HE ") removed, then everything except letters
+# and digits (spaces, "-", "/", "."), then leading zeros: "HE_00001000",
+# "00001000" and "1000" all give "1000", "0100/569-4" gives "1005694". The
 # state is part of the key (state_id_key()), so equal IDs in different
 # states stay apart. Numbers read as text keep all digits ("25470023", not
 # "2.547e+07").
@@ -104,7 +105,7 @@ norm_id <- function(x) {
   if (is.numeric(x)) x <- format(x, scientific = FALSE, trim = TRUE, drop0trailing = TRUE)
   x <- toupper(trimws(as.character(x)))
   x <- sub(paste0("^(", paste(state_codes, collapse = "|"), ")[_ -]+"), "", x)
-  x <- gsub("[[:space:]]", "", x)
+  x <- gsub("[^A-Z0-9]", "", x)
   x <- sub("^0+(?=.)", "", x, perl = TRUE)
   ifelse(is.na(x) | x == "" | x == "NA", NA_character_, x)
 }
@@ -514,6 +515,39 @@ check_id_overlap <- function(joined) {
     )
 }
 
+# Why do IDs not match? Per source (against gw_base) and state: up to `n`
+# IDs found only in the source and only in gw_base, as written in the file
+# and as compared (the key), so differences in the notation can be seen.
+check_id_examples <- function(joined, n = 10) {
+  gw <- joined$gwbase |>
+    dplyr::filter(!is.na(key)) |>
+    dplyr::transmute(state, id = well_id, key) |>
+    dplyr::distinct(key, .keep_all = TRUE)
+  rows <- joined$rows |>
+    dplyr::filter(!is.na(key)) |>
+    dplyr::transmute(source, file, state, id, key) |>
+    dplyr::distinct(source, key, .keep_all = TRUE)
+  out <- list()
+  for (s in unique(rows$source)) {
+    r <- rows[rows$source == s, ]
+    for (st in sort(unique(r$state))) {
+      only_source <- r[r$state %in% st & !r$key %in% gw$key, ]
+      only_gw <- gw[gw$state %in% st & !gw$key %in% r$key, ]
+      out[[length(out) + 1]] <- dplyr::bind_rows(
+        tibble::tibble(
+          source = s, state = st, side = paste("only in", s), file = utils::head(only_source$file, n),
+          id_as_written = utils::head(only_source$id, n), compared_as = utils::head(only_source$key, n)
+        ),
+        tibble::tibble(
+          source = s, state = st, side = "only in gw_base", file = NA_character_,
+          id_as_written = utils::head(only_gw$id, n), compared_as = utils::head(only_gw$key, n)
+        )
+      )
+    }
+  }
+  dplyr::bind_rows(out)
+}
+
 # Source names in the columns of the meer table
 check_column_names <- c(gw_base = "gw_base", farm = "farm", meer = "meer", laender = "states", dem = "dem")
 
@@ -669,6 +703,7 @@ check_meer_long <- function(meer, reference = "states") {
 # all values side by side, the meer table and its large differences.
 # Returns the paths.
 write_check_tables <- function(sources, matching, pairs, joined, values, overlap, meer, settings) {
+  examples <- check_id_examples(joined)
   dir <- file.path("output", "source_check")
   dir.create(dir, showWarnings = FALSE, recursive = TRUE)
   links <- joined$rows |>
@@ -697,7 +732,7 @@ write_check_tables <- function(sources, matching, pairs, joined, values, overlap
     dplyr::arrange(dplyr::desc(abs(difference)))
   files <- list(
     column_mapping = sources$report, id_matching = matching, id_pairs = links,
-    id_overlap = overlap, values = wide, meer_wells = meer, meer_large_differences = large
+    id_overlap = overlap, id_examples = examples, values = wide, meer_wells = meer, meer_large_differences = large
   )
   vapply(names(files), function(name) {
     path <- file.path(dir, paste0(name, ".csv"))
@@ -744,7 +779,7 @@ plot_check_overlap <- function(overlap, plot_config, font) {
         "Per pair of sources and state: wells ", colour_word("in both", "#2E86AB"),
         ", only in the ", colour_word("left", "#F0A202"), " or only in the ",
         colour_word("right", "#E4572E"), " source, linked by state and ID (state ",
-        "prefix such as HE_ and leading zeros removed). A bar mostly ",
+        "prefix such as HE_, signs and leading zeros removed). A bar mostly ",
         "orange and red means the IDs do not match."
       ),
       caption = check_caption,
@@ -796,7 +831,7 @@ plot_check_overlap_meer <- function(meer, plot_config, font) {
       subtitle = paste0(
         "Per state: share of the wells in the meer files ", colour_word("found", "#2E86AB"),
         " or ", colour_word("not found", "#E4572E"), " in gw_base, FARM and the state ",
-        "data, by state and ID (state prefix such as HE_ and leading zeros removed)."
+        "data, by state and ID (state prefix such as HE_, signs and leading zeros removed)."
       ),
       caption = check_caption,
       theme = theme_maps(font)
