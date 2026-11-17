@@ -95,16 +95,17 @@ norm_state <- function(x) {
 }
 
 # IDs comparable across sources: upper case, a leading state code with a
-# separator ("HE_", "HE-", "HE ") and spaces removed; leading zeros and other
-# signs are kept (they can be part of the ID): "HE_00001000" and "00001000"
-# give "00001000", but "1000" stays "1000". The state is part of the key
-# (state_id_key()), so equal IDs in different states stay apart. Numbers read
-# as text keep all digits ("25470023", not "2.547e+07").
+# separator ("HE_", "HE-", "HE "), spaces and leading zeros removed; other
+# signs are kept: "HE_00001000", "00001000" and "1000" all give "1000". The
+# state is part of the key (state_id_key()), so equal IDs in different
+# states stay apart. Numbers read as text keep all digits ("25470023", not
+# "2.547e+07").
 norm_id <- function(x) {
   if (is.numeric(x)) x <- format(x, scientific = FALSE, trim = TRUE, drop0trailing = TRUE)
   x <- toupper(trimws(as.character(x)))
   x <- sub(paste0("^(", paste(state_codes, collapse = "|"), ")[_ -]+"), "", x)
   x <- gsub("[[:space:]]", "", x)
+  x <- sub("^0+(?=.)", "", x, perl = TRUE)
   ifelse(is.na(x) | x == "" | x == "NA", NA_character_, x)
 }
 
@@ -570,7 +571,7 @@ check_meer_table <- function(joined, values) {
 # ground elevation (and measuring point) of every source side by side and
 # the difference between every pair of sources (<field>_<second>_minus_
 # <first>, e.g. elev_gs_farm_minus_gw_base, elev_gs_dem_minus_meer).
-check_meer_elevation <- function(meer) {
+check_meer_elevation_table <- function(meer) {
   sources <- c("gw_base", "meer", "farm", "states", "dem")
   ids <- intersect(c("state", "meer_file", "meer_id", "well_id", "farm_id", "states_id"), names(meer))
   out <- meer[, ids]
@@ -584,6 +585,14 @@ check_meer_elevation <- function(meer) {
     }
   }
   out
+}
+
+# A table as csv (UTF-8, comma separated, empty cells for NA); returns the
+# path (for a target with format = "file").
+write_check_csv <- function(data, path) {
+  dir.create(dirname(path), showWarnings = FALSE, recursive = TRUE)
+  utils::write.csv(data, path, row.names = FALSE, na = "", fileEncoding = "UTF-8")
+  path
 }
 
 check_class_colours <- c(
@@ -638,8 +647,7 @@ check_meer_long <- function(meer) {
 # matching, the ID pairs used, the ID overlap per pair of sources and state,
 # all values side by side, the meer table and its large differences.
 # Returns the paths.
-write_check_tables <- function(sources, matching, pairs, joined, values, overlap, meer, meer_elevation,
-                               settings) {
+write_check_tables <- function(sources, matching, pairs, joined, values, overlap, meer, settings) {
   dir <- file.path("output", "source_check")
   dir.create(dir, showWarnings = FALSE, recursive = TRUE)
   links <- joined$rows |>
@@ -668,8 +676,7 @@ write_check_tables <- function(sources, matching, pairs, joined, values, overlap
     dplyr::arrange(dplyr::desc(abs(difference)))
   files <- list(
     column_mapping = sources$report, id_matching = matching, id_pairs = links,
-    id_overlap = overlap, values = wide, meer_wells = meer, meer_elevation = meer_elevation,
-    meer_large_differences = large
+    id_overlap = overlap, values = wide, meer_wells = meer, meer_large_differences = large
   )
   vapply(names(files), function(name) {
     path <- file.path(dir, paste0(name, ".csv"))
@@ -716,7 +723,7 @@ plot_check_overlap <- function(overlap, plot_config, font) {
         "Per pair of sources and state: wells ", colour_word("in both", "#2E86AB"),
         ", only in the ", colour_word("left", "#F0A202"), " or only in the ",
         colour_word("right", "#E4572E"), " source, linked by state and ID (state ",
-        "prefix such as HE_ removed). A bar mostly ",
+        "prefix such as HE_ and leading zeros removed). A bar mostly ",
         "orange and red means the IDs do not match."
       ),
       caption = check_caption,
@@ -768,7 +775,7 @@ plot_check_overlap_meer <- function(meer, plot_config, font) {
       subtitle = paste0(
         "Per state: share of the wells in the meer files ", colour_word("found", "#2E86AB"),
         " or ", colour_word("not found", "#E4572E"), " in gw_base, FARM and the state ",
-        "data, by state and ID (state prefix such as HE_ removed)."
+        "data, by state and ID (state prefix such as HE_ and leading zeros removed)."
       ),
       caption = check_caption,
       theme = theme_maps(font)
@@ -865,11 +872,11 @@ plot_check_meer_map <- function(meer, germany, plot_config, font) {
 }
 
 # All outputs of the check; returns the paths.
-write_source_check <- function(sources, matching, pairs, joined, values, overlap, meer, meer_elevation,
-                               settings, germany, plot_config, font = setup_plot_font(plot_config$font)) {
+write_source_check <- function(sources, matching, pairs, joined, values, overlap, meer, settings,
+                               germany, plot_config, font = setup_plot_font(plot_config$font)) {
   setup_plot_font(plot_config$font)
   c(
-    write_check_tables(sources, matching, pairs, joined, values, overlap, meer, meer_elevation, settings),
+    write_check_tables(sources, matching, pairs, joined, values, overlap, meer, settings),
     plot_check_overlap(overlap, plot_config, font),
     plot_check_overlap_meer(meer, plot_config, font),
     plot_check_meer(meer, plot_config, font),

@@ -256,9 +256,9 @@ Needs the package readxl.
   state's file). Case, umlauts, spaces and signs in the names do not matter.
   `output/source_check/column_mapping.csv` shows which column was found.
 - IDs: the wells of all sources are linked by state and ID. A state prefix
-  (`HE_`, `HE-`) and spaces are removed first, leading zeros and other signs
-  are kept: `HE_00001000` and `00001000` (in Hessen) are the same well,
-  `1000` is not. The state comes from the file name, a state column (codes
+  (`HE_`, `HE-`), spaces and leading zeros are removed first, other signs
+  are kept: `HE_00001000`, `00001000` and `1000` (in Hessen) are the same
+  well. The state comes from the file name, a state column (codes
   or names, also within longer names such as "Freie und Hansestadt Hamburg";
   values not recognised are reported as a warning) or the ID prefix. As a
   check, every gw_base column with text or whole numbers is also tried
@@ -281,7 +281,8 @@ Needs the package readxl.
   many meer wells differ from gw_base by how much, `meer_map.png` where
   (ground elevation), `meer_large_differences.csv` the differences above
   `report_threshold_m`. Target `check_meer_elevation`
-  (`meer_elevation.csv`): the meer wells with the ground elevation and
+  (written by target `check_meer_elevation_csv` to
+  `output/source_check/meer_elevation.csv`): the meer wells with the ground elevation and
   measuring point of every source side by side and the difference between
   every pair of sources (`elev_gs_farm_minus_gw_base`,
   `elev_gs_dem_minus_meer`, ...). `values.csv` has the values of all wells of all
