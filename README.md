@@ -264,7 +264,10 @@ Needs the package readxl.
   distances between the coordinates of linked wells). If the mapped ID
   links less than half of a file's wells and another column clearly more,
   that column is used (`id_auto`, noted in `id_pairs.csv`); a column can
-  also be set per file in `id_pairs`.
+  also be set per file in `id_pairs`. For the distances, EPSG codes that
+  PROJ does not know (such as 0) count as missing, and the CRS is guessed
+  from the coordinates; `id_pairs.csv` counts these wells and lists the
+  codes.
 - Comparison of every pair of sources (gw_base, FARM, meer, states, and the
   meer DEM as a ground elevation) per field, for the wells in both:
   `agreement.png` (share of wells by size of the difference, per pair,

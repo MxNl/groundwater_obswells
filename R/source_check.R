@@ -368,8 +368,24 @@ check_join <- function(sources, gwbase, pairs, settings) {
   j <- dplyr::bind_rows(out)
   j <- dplyr::left_join(j, dplyr::select(gw_unique, key, well_id, gw_x, gw_y), by = "key")
   j$matched <- !is.na(j$well_id)
-  # source coordinates in EPSG 25832 (guessed where the EPSG is missing)
-  epsg <- ifelse(is.na(j$epsg), guess_crs(j$x, j$y), j$epsg)
+  # source coordinates in EPSG 25832. EPSG codes that PROJ does not know
+  # (0, typos) count as missing; missing ones are guessed from the
+  # coordinates (epsg_from says which)
+  given <- suppressWarnings(as.integer(j$epsg))
+  codes <- unique(stats::na.omit(given))
+  known <- codes[vapply(codes, function(code) {
+    crs <- tryCatch(suppressWarnings(sf::st_crs(code)), error = function(e) sf::NA_crs_)
+    !is.na(crs)
+  }, logical(1))]
+  guessed <- guess_crs(j$x, j$y)
+  epsg <- ifelse(given %in% known, given, guessed)
+  j$epsg_from <- dplyr::case_when(
+    given %in% known ~ "file",
+    !is.na(given) & !is.na(guessed) ~ "guessed (unknown code in file)",
+    !is.na(guessed) ~ "guessed",
+    !is.na(j$x) & !is.na(j$y) ~ "unknown, not transformed",
+    .default = NA_character_
+  )
   j$x25832 <- NA_real_
   j$y25832 <- NA_real_
   for (code in unique(stats::na.omit(epsg))) {
@@ -377,9 +393,20 @@ check_join <- function(sources, gwbase, pairs, settings) {
     if (length(k) == 0) next
     x <- j$x[k]
     x[x >= 32e6 & x < 34e6] <- x[x >= 32e6 & x < 34e6] %% 1e6 # UTM zone prefix
-    xy <- sf::st_coordinates(sf::st_transform(sf::st_as_sf(
-      data.frame(x = x, y = j$y[k]), coords = c("x", "y"), crs = as.integer(code)
-    ), 25832))
+    xy <- tryCatch(
+      sf::st_coordinates(sf::st_transform(sf::st_as_sf(
+        data.frame(x = x, y = j$y[k]), coords = c("x", "y"), crs = as.integer(code)
+      ), 25832)),
+      error = function(e) {
+        warning("Source check: coordinates with EPSG ", code, " not transformed: ",
+                conditionMessage(e), call. = FALSE)
+        NULL
+      }
+    )
+    if (is.null(xy)) {
+      j$epsg_from[k] <- "unknown, not transformed"
+      next
+    }
     j$x25832[k] <- xy[, 1]
     j$y25832[k] <- xy[, 2]
   }
@@ -487,6 +514,10 @@ write_check_tables <- function(sources, matching, pairs, joined, values, differe
       gwbase_duplicates = sum(gwbase_duplicates > 1, na.rm = TRUE),
       median_distance_m = stats::median(distance_m, na.rm = TRUE),
       over_100_m = sum(distance_m > 100, na.rm = TRUE),
+      epsg_from_file = sum(epsg_from == "file", na.rm = TRUE),
+      epsg_guessed = sum(grepl("^guessed", epsg_from)),
+      epsg_unknown_codes = paste(sort(unique(epsg[grepl("unknown code", epsg_from)])), collapse = " "),
+      not_transformed = sum(epsg_from == "unknown, not transformed", na.rm = TRUE),
       .by = c(source, file)
     ) |>
     dplyr::left_join(dplyr::select(pairs, -source, -source_column), by = "file")
