@@ -130,7 +130,7 @@ well_elevations <- function(meta) {
 
 farm_fill_colours <- c(
   "FARM" = "#2E86AB", "gw_base" = "#F0A202",
-  "missing in both" = "#E4572E", "missing, not in gw_base" = "grey70"
+  "missing in both" = "#E4572E", "missing, not in gw_base" = "#A6A6A6"
 )
 farm_field_labels <- c(
   elev_gs = "Ground elevation", screen_top = "Screen top", screen_bot = "Screen bottom",
@@ -203,7 +203,7 @@ plot_farm_filling <- function(meta, plot_config, font = setup_plot_font(plot_con
         "Per state: the FARM wells with the value ", colour_word("from FARM", "#2E86AB"), ", ",
         colour_word("filled from gw_base", "#F0A202"), " (same well, linked by state and ID), ",
         colour_word("missing in both", "#E4572E"), " or ",
-        colour_word("missing, the well not found in gw_base", "grey55"), ". The analysis uses ",
+        colour_word("missing, the well not found in gw_base", "#8C8C8C"), ". The analysis uses ",
         "the filled values; the levels come from gw_base, so wells not found there have none."
       ),
       caption = "Data: FARM master data, gw_base (tbl_meta_well_import).",

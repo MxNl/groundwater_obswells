@@ -31,9 +31,12 @@ setup_plot_font <- function(font) {
   "sans"
 }
 
-# a word in bold and a colour (marquee markdown)
+# a word in bold and a colour (marquee markdown). Marquee needs the colour as
+# a hex code, so R colour names ("grey55") are converted.
 colour_word <- function(word, colour) {
-  paste0("{", colour, " **", word, "**}")
+  rgb <- grDevices::col2rgb(colour)
+  hex <- grDevices::rgb(rgb[1], rgb[2], rgb[3], maxColorValue = 255)
+  paste0("{", hex, " **", word, "**}")
 }
 
 # subtitle as marquee markdown, justified, wrapped to the plot width by
