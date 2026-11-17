@@ -124,10 +124,10 @@ plot_state_attrition <- function(attrition, scenarios, spec, plot_config,
     ggplot2::labs(
       title = "Where the wells drop out, per state",
       subtitle = paste0(
-        "Per state (prefix of the well ID, wells in the metadata in brackets): ",
+        "Per state (prefix of the well ID, FARM wells in brackets): ",
         "wells lost at each step towards the usable wells, the usable wells, and ",
         "the wells each scenario selects, as numbers and shares of the state's ",
-        "wells in the metadata."
+        "FARM wells."
       ),
       x = NULL, y = NULL,
       caption = plot_config$caption

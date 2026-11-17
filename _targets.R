@@ -29,6 +29,7 @@ list(
   tar_target(
     well_config,
     list(
+      # gw_base: metadata (fills the gaps of the FARM master data) and levels
       meta_table = "tbl_meta_well_import",
       meta_id = "well_id",
       elev_gs = "elev_gs",       # elevation of the ground surface, m a.s.l.
@@ -40,7 +41,7 @@ list(
       gwl_level = "gwl",         # groundwater level, m a.s.l.
       x = "x_25832",             # coordinate columns of meta_table; NULL: found
       y = "y_25832",             #   by their names (x/y, rw/hw, lon/lat, ...)
-      crs = 25832,               # EPSG code of x/y; NULL: guessed per well
+      crs = 25832,               # EPSG code of the gw_base x/y; NULL: guessed per well
 
       # checks of single measurements (on the server)
       gwl_valid_range = c(-100, 3000), # m a.s.l.; outside: error codes like -999
@@ -73,14 +74,46 @@ list(
     cue = tar_cue(mode = "always")
   ),
   tar_target(well_spec, resolve_well_spec(well_config, db_columns, db_tables, reference_month)),
-  # checksums of the metadata columns used, on every run (the metadata table
-  # is small): changed values (e.g. screen depths filled in) rerun the
-  # metadata query, changed ground elevations also the level queries
-  tar_target(meta_checksums, fetch_meta_checksums(well_spec), cue = tar_cue(mode = "always")),
-  # only the settings the server queries use: a change of other settings
-  # (spikes, years per season, scenarios, plots) does not rerun them
-  tar_target(query_spec, server_query_spec(well_spec, meta_checksums$elev_gs)),
-  tar_target(well_meta, fetch_well_meta(query_spec, meta_checksums$all)),
+  # gw_base metadata (used to fill the FARM table): a checksum of the columns
+  # used on every run (the table is small), so changed values (e.g. screen
+  # depths filled in) rerun the metadata query
+  tar_target(meta_spec, meta_query_spec(well_spec)),
+  tar_target(meta_checksum, fetch_meta_checksum(meta_spec), cue = tar_cue(mode = "always")),
+  tar_target(gwbase_meta, fetch_well_meta(meta_spec, meta_checksum)),
+
+  # The wells analysed: FARM master data, filled from gw_base -------------------
+  # Where FARM has no ground elevation, screen depth or coordinates, the
+  # value of the same well in gw_base is used (linked by state and ID: state
+  # prefix such as HE_, signs and leading zeros removed). Column names as in
+  # the file; case, umlauts, spaces and signs do not matter.
+  tar_target(
+    farm_config,
+    list(
+      file = "cache/check_farm/stammdaten_geo.csv",
+      columns = list(
+        id = "messstellen_id", state = "bundesland",
+        elev_gs = "gok__m_nn_", elev_mp = "messpunkth\u00f6he__m_nn_",
+        screen_top = "filter_ok_unter_gok", screen_bot = "filter_uk_unter_gok",
+        x = "x", y = "y", epsg = "epsg"
+      )
+    )
+  ),
+  tar_target(farm_file, farm_config$file, format = "file"),
+  tar_target(farm_meta, read_farm_meta(farm_file, farm_config)),
+  # one row per FARM well: the values used and where they come from
+  # (*_from: FARM, gw_base, missing); also output/well_meta_filled.csv
+  tar_target(well_meta, fill_farm_meta(farm_meta, gwbase_meta, well_config$crs)),
+  tar_target(
+    farm_filling_plot,
+    plot_farm_filling(well_meta, plot_config, plot_font),
+    format = "file"
+  ),
+
+  # Levels of the analysis wells ------------------------------------------------------
+  # only the settings the server queries use and the wells with their
+  # (filled) ground elevation: a change of other settings (spikes, years per
+  # season, scenarios, plots) does not rerun them
+  tar_target(query_spec, server_query_spec(well_spec, well_elevations(well_meta))),
   tar_target(gwl_monthly, fetch_gwl_monthly(query_spec)),
   tar_target(gwl_stats, summarise_gwl_monthly(gwl_monthly, well_spec)),
   tar_target(well_dtw, assess_well_dtw(well_meta, gwl_stats, well_spec)),
@@ -141,12 +174,14 @@ list(
       dir = "plots",
       distribution_max_m = 16,     # x axis of the distributions, m below ground
       caption = paste(
-        "Data: groundwater observation wells (tbl_meta_well_import, tbl_gwl_raw).",
+        "Data: FARM master data, filled from gw_base (tbl_meta_well_import);",
+        "groundwater levels gw_base (tbl_gwl_raw).",
         "Borders: Natural Earth."
       )
     )
   ),
-  tar_target(well_points, wells_to_points(well_dtw, crs = well_config$crs)),
+  # coordinates of the analysis table are in EPSG 25832 (fill_farm_meta())
+  tar_target(well_points, wells_to_points(well_dtw, crs = 25832)),
   # the cache folders are listed on every run, so borders and plots are
   # updated when files are added there (state borders, fonts)
   tar_target(naturalearth_files, list_naturalearth_files(), cue = tar_cue(mode = "always")),
@@ -289,7 +324,7 @@ list(
   ),
   tar_target(check_files, check_input_files(check_settings), format = "file"),
   tar_target(check_sources, read_check_sources(check_files, check_settings)),
-  tar_target(check_gwbase, fetch_gwbase_check(query_spec, db_columns, meta_checksums$all)),
+  tar_target(check_gwbase, fetch_gwbase_check(meta_spec, db_columns, meta_checksum)),
   tar_target(check_matching, check_id_matching(check_sources, check_gwbase, check_settings)),
   tar_target(check_pairs, choose_id_pairs(check_matching, check_settings)),
   tar_target(check_joined, check_join(check_sources, check_gwbase, check_pairs, check_settings)),
@@ -304,7 +339,7 @@ list(
   tar_target(check_meer_elevation, check_meer_elevation_table(check_meer)),
   tar_target(
     check_meer_elevation_csv,
-    write_check_csv(check_meer_elevation, "output/source_check/meer_elevation.csv"),
+    write_csv_file(check_meer_elevation, "output/source_check/meer_elevation.csv"),
     format = "file"
   ),
   tar_target(

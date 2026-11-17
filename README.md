@@ -1,7 +1,9 @@
 # groundwater_obswells
 
-Analyses how suitable groundwater observation wells are, using their metadata
-and time series from a Microsoft SQL Server database.
+Analyses how suitable groundwater observation wells are. The wells are those
+of the FARM master data (`cache/check_farm/stammdaten_geo.csv`), with gaps
+filled from gw_base; the groundwater levels come from gw_base, a Microsoft SQL
+Server database.
 
 ## Setup
 
@@ -52,6 +54,7 @@ targets::tar_make()
 targets::tar_read(db_table_overview)   # one row per table
 targets::tar_read(db_columns)          # one row per column
 
+targets::tar_read(well_meta)           # FARM wells, filled from gw_base
 targets::tar_read(well_availability)   # how far the data go, in numbers
 targets::tar_read(gwl_checks)          # measurements removed by the checks
 targets::tar_read(well_dtw)            # one row per well
@@ -91,17 +94,44 @@ data (ranges in `threshold_settings`):
   removed values found in the most wells
 and one `scenario_<id>.png` per scenario.
 
+## Wells: FARM master data, filled from gw_base
+
+The wells analysed are the records of the FARM master data
+(`farm_config$file`; column names in `farm_config$columns`, case, umlauts,
+spaces and signs do not matter). Each FARM well is linked to gw_base
+(`tbl_meta_well_import`) by state and ID: the state from the state column
+(codes or names) or an ID prefix, the IDs with a state prefix such as `HE_`,
+all signs other than letters and digits and leading zeros removed
+(`R/link.R`). Where FARM has no ground elevation, screen top or bottom or
+coordinates, the value of the linked gw_base well is used.
+
+`well_meta` has one row per FARM record: `well_id` (the gw_base ID, under
+which the levels are read; `<state>_<FARM ID>` for wells not found in
+gw_base), `farm_id`, `state`, `in_gw_base`, the values used (coordinates in
+EPSG 25832; FARM codes PROJ does not know, such as 0, are guessed from the
+coordinates) and per field where the value comes from (`elev_gs_from`,
+`screen_top_from`, `screen_bot_from`, `coords_from`: FARM, gw_base, missing
+in both, or missing and the well not found in gw_base).
+`plots/farm_filling.png` and `output/farm_filling.csv` show per field and
+state how many values come from FARM, were filled or stay missing;
+`output/well_meta_filled.csv` holds the table.
+
+The groundwater levels come from gw_base (`tbl_gwl_raw`), so FARM wells not
+found there have none (flag "not in gw_base (no levels)"). Only the levels
+of the linked wells are read.
+
 ## Depth to groundwater
 
-`well_dtw` has one row per well, from `tbl_meta_well_import` and
-`tbl_gwl_raw`. Table and column names, thresholds and criteria are set in
-`well_config` in `_targets.R`.
+`well_dtw` has one row per FARM well, from `well_meta` and `tbl_gwl_raw`.
+Table and column names, thresholds and criteria are set in `well_config` in
+`_targets.R`.
 
 How the mean depth is calculated:
 
 1. **Checks of single measurements** (on the server): empty values, levels
    outside `gwl_valid_range` (error codes such as -999) and depths below
-   ground outside `dtw_valid_range` are left out and counted per well
+   ground outside `dtw_valid_range` (with the filled ground elevation) are
+   left out and counted per well
    (`n_obs_empty`, `n_obs_out_of_range`, `n_obs_implausible_dtw`).
 2. **Monthly means** of the valid measurements, so dense logger periods do
    not outweigh monthly manual readings.
@@ -211,13 +241,15 @@ from rnaturalearthdata.
 ## When the data are read again
 
 The database changes outside the pipeline, so on every run it reads the
-catalogue (row counts of the tables) and checksums of the metadata columns
-used. The queries rerun when:
+catalogue (row counts of the tables) and a checksum of the gw_base metadata
+columns used. The queries rerun when:
 
 - rows are added or deleted (row counts),
-- values in the metadata change (checksum over well ID, ground elevation,
-  screen depths and coordinates): the metadata query reruns; if a ground
-  elevation changed, the level queries too, as they check the depth below
+- values in the gw_base metadata change (checksum over well ID, ground
+  elevation, screen depths and coordinates): the metadata query reruns,
+- the FARM file changes,
+- the analysis wells or their (filled) ground elevations change: the level
+  queries rerun, as they read only these wells and check the depth below
   ground,
 - the settings they use change (`query_spec`, `threshold_query_settings`),
 - a new month starts, as the recent window moves on: the target
@@ -234,15 +266,20 @@ the next new month at the latest; to read them at once, run
 targets of a run share their connections. The catalogue queries (`R/catalog.R`) read
 only SQL Server's catalogue views, so no table is scanned. The groundwater
 levels (`R/wells.R`) are checked and averaged per month on the server, so
-only the monthly means of the window come back; DuckDB does the rest. Results come back
+only the monthly means of the window come back; DuckDB does the rest. The
+level queries need the analysis wells and their ground elevations, which
+may come from FARM: `db_query_wells()` (`R/db.R`) writes them to a temporary
+table `#well_elev` on the connection the query runs on (tempdb, no rights
+beyond reading needed) and drops it afterwards. Results come back
 as tibbles for dplyr.
 
 ## Source check (temporary)
 
 Compares the well metadata of gw_base with three other sources and these
 among each other, kept apart from the rest (targets `check_*`,
-`R/source_check.R`, settings in `check_settings`), to be removed when done.
-Needs the package readxl.
+`R/source_check.R`, settings in `check_settings`), to be removed when done:
+the analysis does not need it (the shared reading and linking functions are
+in `R/link.R`). Needs the package readxl.
 
 - Inputs in `cache/`: `check_farm/stammdaten_geo.csv` (FARM),
   `check_meer/FARM_*_hoehe_abweichung.*` (meer, with a DEM elevation) and
@@ -293,9 +330,9 @@ Needs the package readxl.
 
 ## Planned
 
-- Ground surface elevation: where `elev_gs` is missing, estimate it from
-  `elev_mp` minus the median stick-up, flagged as estimated (about 1,100
-  wells in NW lack `elev_gs`).
-- Estimated screens from the total well depth, flagged as estimated, if
-  the metadata have such a column (screen depths are missing for most wells
-  in BY, BW and ST).
+- Ground surface elevation: where `elev_gs` is still missing after the
+  filling, estimate it from the measuring point height of FARM (`elev_mp` in
+  `well_meta`) minus the median stick-up, flagged as estimated.
+- Estimated screens from the final depth, flagged as estimated: FARM has a
+  column `endteufe__m_u__ansatzpunkt_` (screen depths are missing for most
+  wells in BY, BW and ST).

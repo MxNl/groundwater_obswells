@@ -71,7 +71,7 @@ well_stages <- function(wells, spec) {
 
   tibble::tibble(
     label = c(
-      "Wells in the metadata",
+      "FARM wells (filled from gw_base)",
       "with ground surface elevation",
       "with valid groundwater levels",
       "with screen depths",
@@ -79,14 +79,14 @@ well_stages <- function(wells, spec) {
       paste0("each season in \u2265 ", spec$min_years_per_season, " of these years")
     ),
     short = c(
-      "Metadata", "Ground\nelevation", "Valid\nlevels", "Screen\ndepths",
+      "FARM\nwells", "Ground\nelevation", "Valid\nlevels", "Screen\ndepths",
       "Recent\ndata", "Usable\nwells"
     ),
     n = c(nrow(m), sum(has_gs), sum(has_gwl), sum(has_screen), sum(recent), sum(usable)),
     reason = c(
       NA,
       "no ground surface elevation",
-      "no valid groundwater levels",
+      "no valid groundwater levels (incl. wells not in gw_base)",
       "no screen depths",
       paste("no data in the last", spec$recent_years, "years"),
       paste("a season in <", spec$min_years_per_season, "years")
@@ -536,7 +536,7 @@ plot_sankeys <- function(wells, scenarios, steps, spec, plot_config,
   overview <- sankey_plot(stages, "grey45", font, label_size = 3.1) +
     ggplot2::labs(
       title = "Where the wells drop out",
-      subtitle = "From the metadata to the usable wells: the band shows the wells left, the grey branches the wells dropped at each step.",
+      subtitle = "From the FARM wells (filled from gw_base) to the usable wells: the band shows the wells left, the grey branches the wells dropped at each step.",
       caption = plot_config$caption
     ) +
     ggplot2::theme(
@@ -988,6 +988,10 @@ method_steps <- function(spec, coverage) {
   m <- function(x) sub("^-", "\u2212", format(x, decimal.mark = ".", trim = TRUE, big.mark = ","))
   tibble::tribble(
     ~phase, ~title, ~logic,
+    "Wells", "FARM master data, filled from gw_base",
+      paste0("The wells of the FARM master data. Missing ground elevation, screen depths and ",
+             "coordinates are taken from the same well in gw_base (linked by state and ID); ",
+             "the levels come from gw_base."),
     "Each measurement", "Complete records",
       "Keep measurements with well ID and date; an empty level counts as missing.",
     "Each measurement", "Error codes and impossible levels",
@@ -1063,7 +1067,7 @@ plot_method_flowchart <- function(spec, coverage, plot_config,
     yend = steps$ymax[-1]
   )
   phase_colours <- c(
-    "Each measurement" = "grey40", "Time series" = "grey40",
+    "Wells" = "grey40", "Each measurement" = "grey40", "Time series" = "grey40",
     "Usable wells" = "grey40", "Scenarios" = "#E4572E"
   )
 

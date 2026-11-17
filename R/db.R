@@ -138,6 +138,33 @@ db_query <- function(sql) {
   tibble::as_tibble(DBI::dbGetQuery(con, sql))
 }
 
+# Runs `sql` with the temporary table #well_elev (well_id, elev_gs) holding
+# `wells` (well_elevations()): the analysis wells and their ground
+# elevation, which may come from FARM, not from the database. The table is
+# created on the connection the query runs on and dropped afterwards; a
+# temporary table lives in tempdb, so no rights beyond reading are needed.
+db_query_wells <- function(sql, wells) {
+  con <- pool::poolCheckout(db_pool())
+  drop <- "IF OBJECT_ID('tempdb..#well_elev') IS NOT NULL DROP TABLE #well_elev"
+  on.exit({
+    try(DBI::dbExecute(con, drop), silent = TRUE)
+    pool::poolReturn(con)
+  }, add = TRUE)
+  DBI::dbExecute(con, drop)
+  DBI::dbExecute(con, paste(
+    "CREATE TABLE #well_elev (",
+    "well_id nvarchar(100) COLLATE DATABASE_DEFAULT NOT NULL PRIMARY KEY,",
+    "elev_gs float NULL)"
+  ))
+  if (nrow(wells) > 0) {
+    DBI::dbExecute(
+      con, "INSERT INTO #well_elev (well_id, elev_gs) VALUES (?, ?)",
+      params = list(as.character(wells$well_id), as.numeric(wells$elev_gs))
+    )
+  }
+  tibble::as_tibble(DBI::dbGetQuery(con, sql))
+}
+
 # Schemas to include, from DB_SCHEMAS (comma-separated); NULL means all.
 db_schemas <- function() {
   x <- Sys.getenv("DB_SCHEMAS")

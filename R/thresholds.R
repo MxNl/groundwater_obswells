@@ -6,43 +6,6 @@
 # plausibility limits and error codes (a list of candidate codes and the
 # values among the removed measurements). Written to plots/thresholds/.
 
-# The measurements with their checks, as in gwl_monthly_sql(): "gs" (ground
-# elevation per well) and "checked" (well_id, obs_date, gwl, elev_gs,
-# check_code: 0 valid, 1 empty, 2 out of range, 3 implausible depth).
-checked_measurements_cte <- function(spec) {
-  sprintf(
-    "WITH gs AS (
-  SELECT CAST(%1$s AS nvarchar(100)) AS well_id,
-         MAX(CAST(%2$s AS float)) AS elev_gs
-  FROM %3$s.%4$s
-  GROUP BY CAST(%1$s AS nvarchar(100))
-),
-checked AS (
-  SELECT r.well_id, r.obs_date, r.gwl, gs.elev_gs,
-         CASE
-           WHEN r.gwl IS NULL THEN 1
-           WHEN r.gwl < %10$s OR r.gwl > %11$s THEN 2
-           WHEN gs.elev_gs - r.gwl < %12$s OR gs.elev_gs - r.gwl > %13$s THEN 3
-           ELSE 0
-         END AS check_code
-  FROM (
-    SELECT CAST(%5$s AS nvarchar(100)) AS well_id,
-           CAST(%6$s AS date) AS obs_date,
-           CAST(%7$s AS float) AS gwl
-    FROM %8$s.%9$s
-    WHERE %5$s IS NOT NULL AND %6$s IS NOT NULL
-  ) AS r
-  LEFT JOIN gs ON gs.well_id = r.well_id
-)",
-    sql_ident(spec$meta_id), sql_ident(spec$elev_gs),
-    sql_ident(spec$meta_schema), sql_ident(spec$meta_table),
-    sql_ident(spec$gwl_id), sql_ident(spec$gwl_date), sql_ident(spec$gwl_level),
-    sql_ident(spec$gwl_schema), sql_ident(spec$gwl_table),
-    sql_number(spec$gwl_valid_range[1]), sql_number(spec$gwl_valid_range[2]),
-    sql_number(spec$dtw_valid_range[1]), sql_number(spec$dtw_valid_range[2])
-  )
-}
-
 # Per well and calendar year of the last history_years: in how many months
 # of each season (DJF, MAM, JJA, SON; December in its own calendar year)
 # there are valid measurements.
@@ -84,20 +47,23 @@ GROUP BY depth_bin"
   )
 }
 
-fetch_year_seasons <- function(spec, settings) db_query(year_seasons_sql(spec, settings))
-fetch_depth_histogram <- function(spec) db_query(depth_histogram_sql(spec))
+# (checked_measurements_cte() in R/wells.R: the analysis wells only)
+fetch_year_seasons <- function(spec, settings) db_query_wells(year_seasons_sql(spec, settings), spec$well_elev)
+fetch_depth_histogram <- function(spec) db_query_wells(depth_histogram_sql(spec), spec$well_elev)
 # Candidate error codes: how often each value of settings$candidate_codes
-# occurs as a level, and in how many wells. All candidates are listed, also
-# those that do not occur.
+# occurs as a level of the analysis wells, and in how many wells. All
+# candidates are listed, also those that do not occur.
 candidate_codes_sql <- function(spec, settings) {
   codes <- paste(sql_number(settings$candidate_codes), collapse = ", ")
   sprintf(
-    "SELECT CAST(%1$s AS float) AS value,
+    "SELECT CAST(r.%1$s AS float) AS value,
        COUNT_BIG(*) AS n,
-       COUNT(DISTINCT CAST(%2$s AS nvarchar(100))) AS n_wells
-FROM %3$s.%4$s
-WHERE CAST(%1$s AS float) IN (%5$s)
-GROUP BY CAST(%1$s AS float)",
+       COUNT(DISTINCT e.well_id) AS n_wells
+FROM %3$s.%4$s AS r
+INNER JOIN #well_elev AS e
+  ON e.well_id = CAST(r.%2$s AS nvarchar(100)) COLLATE DATABASE_DEFAULT
+WHERE CAST(r.%1$s AS float) IN (%5$s)
+GROUP BY CAST(r.%1$s AS float)",
     sql_ident(spec$gwl_level), sql_ident(spec$gwl_id),
     sql_ident(spec$gwl_schema), sql_ident(spec$gwl_table), codes
   )
@@ -123,12 +89,12 @@ ORDER BY n_wells DESC, n DESC", as.integer(settings$top_values))
 }
 
 fetch_candidate_codes <- function(spec, settings) {
-  found <- db_query(candidate_codes_sql(spec, settings))
+  found <- db_query_wells(candidate_codes_sql(spec, settings), spec$well_elev)
   tibble::tibble(value = settings$candidate_codes) |>
     dplyr::left_join(found, by = "value") |>
     dplyr::mutate(n = dplyr::coalesce(n, 0), n_wells = dplyr::coalesce(n_wells, 0))
 }
-fetch_removed_values <- function(spec, settings) db_query(removed_values_sql(spec, settings))
+fetch_removed_values <- function(spec, settings) db_query_wells(removed_values_sql(spec, settings), spec$well_elev)
 
 # Calculations ------------------------------------------------------------------------
 

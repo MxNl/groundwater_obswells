@@ -1,12 +1,15 @@
 # Depth to groundwater per well --------------------------------------------------
 #
-# For every well: the screen depths from the metadata and the mean depth to
-# the groundwater table below ground surface (dtw), from the groundwater
-# levels (gwl, m above sea level) of the last years with data:
+# For every well of the FARM master data (filled from gw_base, R/farm.R):
+# the screen depths and the mean depth to the groundwater table below ground
+# surface (dtw), from the groundwater levels (gwl, m above sea level) in
+# gw_base of the last years with data:
 #
-#   1. On the server, each measurement is checked: empty, outside the valid
-#      level range (error codes such as -999) or an implausible depth below
-#      ground. Only valid measurements are averaged per month.
+#   1. On the server, each measurement of the analysis wells (temporary
+#      table #well_elev, see db_query_wells()) is checked: empty, outside the
+#      valid level range (error codes such as -999) or an implausible depth
+#      below the (filled) ground elevation. Only valid measurements are
+#      averaged per month.
 #   2. Locally, in DuckDB: the recent window is the last `recent_years` up
 #      to the current month (reference_date); monthly means far from the
 #      well's median there (spikes) are removed. The mean window is the
@@ -133,53 +136,52 @@ find_coordinate_column <- function(columns, axis) {
   if (length(hit) == 0) NULL else hit[1]
 }
 
-# The part of the spec the server queries use: tables, columns, the checks
-# of single measurements, the recent window (and the month it ends with) and
-# the tables' row counts, so the queries rerun when the data change, but not
-# when settings used only locally change.
-server_query_spec <- function(spec, elev_gs_checksum = NULL) {
+# The part of the spec the level queries use: the level table, the checks of
+# single measurements, the recent window (and the month it ends with), the
+# table's row count, and the analysis wells with their ground elevation
+# (well_elevations()), so the queries rerun when the levels, the wells or
+# their elevations change, but not when settings used only locally change.
+server_query_spec <- function(spec, wells) {
   out <- spec[c(
-    "meta_schema", "meta_table", "meta_id", "elev_gs", "screen_top", "screen_bot", "x", "y",
     "gwl_schema", "gwl_table", "gwl_id", "gwl_date", "gwl_level",
-    "gwl_valid_range", "dtw_valid_range", "reference_month", "recent_years",
-    "meta_n_rows", "gwl_n_rows"
+    "gwl_valid_range", "dtw_valid_range", "reference_month", "recent_years", "gwl_n_rows"
   )]
-  # the level queries check the depth below ground, so they rerun when a
-  # ground elevation changes
-  out$elev_gs_checksum <- elev_gs_checksum
+  out$well_elev <- wells
   out
 }
 
-# Checksums of the metadata columns used, to notice changed values (the row
-# count only shows added or deleted rows): `all` over well ID, ground
-# elevation, screen top and bottom and coordinates, `elev_gs` over well ID
-# and ground elevation only. Cheap: the metadata table is small.
-meta_checksums_sql <- function(spec) {
+# The part of the spec the metadata queries of gw_base use.
+meta_query_spec <- function(spec) {
+  spec[c("meta_schema", "meta_table", "meta_id", "elev_gs", "screen_top", "screen_bot", "x", "y", "meta_n_rows")]
+}
+
+# Checksum of the gw_base metadata columns used (well ID, ground elevation,
+# screen top and bottom, coordinates), to notice changed values (the row
+# count only shows added or deleted rows). Cheap: the metadata table is
+# small.
+meta_checksum_sql <- function(spec) {
   cols <- vapply(
     c(spec$meta_id, spec$elev_gs, spec$screen_top, spec$screen_bot, spec$x, spec$y),
     sql_ident, character(1)
   )
   sprintf(
     "SELECT COUNT_BIG(*) AS n,
-       CHECKSUM_AGG(BINARY_CHECKSUM(%s)) AS checksum_all,
-       CHECKSUM_AGG(BINARY_CHECKSUM(%s, %s)) AS checksum_elev_gs
+       CHECKSUM_AGG(BINARY_CHECKSUM(%s)) AS checksum_all
 FROM %s.%s",
-    paste(cols, collapse = ", "), cols[1], cols[2],
+    paste(cols, collapse = ", "),
     sql_ident(spec$meta_schema), sql_ident(spec$meta_table)
   )
 }
 
-fetch_meta_checksums <- function(spec) {
-  res <- db_query(meta_checksums_sql(spec))
-  list(
-    all = paste(res$n, res$checksum_all),
-    elev_gs = paste(res$n, res$checksum_elev_gs)
-  )
+fetch_meta_checksum <- function(spec) {
+  res <- db_query(meta_checksum_sql(spec))
+  paste(res$n, res$checksum_all)
 }
 
-# The metadata columns needed, one row per metadata record. `checksums` is
-# not used here: it only makes the target rerun when the metadata change.
-fetch_well_meta <- function(spec, checksums = NULL) {
+# The gw_base metadata columns needed, one row per metadata record (used to
+# fill the FARM table). `checksum` is not used here: it only makes the
+# target rerun when the metadata change.
+fetch_well_meta <- function(spec, checksum = NULL) {
   sql <- sprintf(
     "SELECT CAST(%s AS nvarchar(100)) AS well_id,
             CAST(%s AS float) AS elev_gs,
@@ -200,47 +202,56 @@ sql_number <- function(x) {
   format(x, scientific = FALSE, trim = TRUE)
 }
 
+# The measurements of the analysis wells with their checks: CTE "checked"
+# (well_id, obs_date, gwl, elev_gs, check_code: 0 valid, 1 empty, 2 out of
+# the valid level range, 3 implausible depth below ground). The wells and
+# their ground elevations come from the temporary table #well_elev
+# (db_query_wells()); levels of other wells are not read. The well IDs are
+# compared in the collation of the database, as #well_elev lives in tempdb.
+checked_measurements_cte <- function(spec) {
+  sprintf(
+    "WITH checked AS (
+  SELECT r.well_id, r.obs_date, r.gwl, e.elev_gs,
+         CASE
+           WHEN r.gwl IS NULL THEN 1
+           WHEN r.gwl < %6$s OR r.gwl > %7$s THEN 2
+           WHEN e.elev_gs - r.gwl < %8$s OR e.elev_gs - r.gwl > %9$s THEN 3
+           ELSE 0
+         END AS check_code
+  FROM (
+    SELECT CAST(%1$s AS nvarchar(100)) COLLATE DATABASE_DEFAULT AS well_id,
+           CAST(%2$s AS date) AS obs_date,
+           CAST(%3$s AS float) AS gwl
+    FROM %4$s.%5$s
+    WHERE %1$s IS NOT NULL AND %2$s IS NOT NULL
+  ) AS r
+  INNER JOIN #well_elev AS e ON e.well_id = r.well_id
+)",
+    sql_ident(spec$gwl_id), sql_ident(spec$gwl_date), sql_ident(spec$gwl_level),
+    sql_ident(spec$gwl_schema), sql_ident(spec$gwl_table),
+    sql_number(spec$gwl_valid_range[1]), sql_number(spec$gwl_valid_range[2]),
+    sql_number(spec$dtw_valid_range[1]), sql_number(spec$dtw_valid_range[2])
+  )
+}
+
 # One scan of the groundwater level table. Returns the monthly means of the
 # valid measurements within the window, and for every well the counts of
 # measurements by check result. Wells without any valid measurement come
 # back as one row with an empty month.
 gwl_monthly_sql <- function(spec) {
-  sprintf(
-    "WITH gs AS (
-  SELECT CAST(%1$s AS nvarchar(100)) AS well_id,
-         MAX(CAST(%2$s AS float)) AS elev_gs
-  FROM %3$s.%4$s
-  GROUP BY CAST(%1$s AS nvarchar(100))
-),
-checked AS (
-  SELECT r.well_id,
-         YEAR(r.obs_date) * 12 + MONTH(r.obs_date) - 1 AS month_index,
-         r.gwl,
-         CASE
-           WHEN r.gwl IS NULL THEN 1
-           WHEN r.gwl < %10$s OR r.gwl > %11$s THEN 2
-           WHEN gs.elev_gs - r.gwl < %12$s OR gs.elev_gs - r.gwl > %13$s THEN 3
-           ELSE 0
-         END AS check_code
-  FROM (
-    SELECT CAST(%5$s AS nvarchar(100)) AS well_id,
-           CAST(%6$s AS date) AS obs_date,
-           CAST(%7$s AS float) AS gwl
-    FROM %8$s.%9$s
-    WHERE %5$s IS NOT NULL AND %6$s IS NOT NULL
-  ) AS r
-  LEFT JOIN gs ON gs.well_id = r.well_id
-),
+  paste0(
+    checked_measurements_cte(spec),
+    sprintf(",
 monthly AS (
   SELECT well_id,
-         month_index,
+         YEAR(obs_date) * 12 + MONTH(obs_date) - 1 AS month_index,
          SUM(CASE WHEN check_code = 0 THEN 1 ELSE 0 END) AS n_valid,
          SUM(CASE WHEN check_code = 1 THEN 1 ELSE 0 END) AS n_empty,
          SUM(CASE WHEN check_code = 2 THEN 1 ELSE 0 END) AS n_out_of_range,
          SUM(CASE WHEN check_code = 3 THEN 1 ELSE 0 END) AS n_implausible_dtw,
          AVG(CASE WHEN check_code = 0 THEN gwl END) AS gwl
   FROM checked
-  GROUP BY well_id, month_index
+  GROUP BY well_id, YEAR(obs_date) * 12 + MONTH(obs_date) - 1
 ),
 per_well AS (
   SELECT m.*,
@@ -266,22 +277,17 @@ SELECT well_id,
        first_month,
        last_month
 FROM per_well
-WHERE (n_valid > 0 AND month_index > %14$d - 12 * %15$d)
+WHERE (n_valid > 0 AND month_index > %d - 12 * %d)
    OR rn = 1",
-    sql_ident(spec$meta_id), sql_ident(spec$elev_gs),
-    sql_ident(spec$meta_schema), sql_ident(spec$meta_table),
-    sql_ident(spec$gwl_id), sql_ident(spec$gwl_date), sql_ident(spec$gwl_level),
-    sql_ident(spec$gwl_schema), sql_ident(spec$gwl_table),
-    sql_number(spec$gwl_valid_range[1]), sql_number(spec$gwl_valid_range[2]),
-    sql_number(spec$dtw_valid_range[1]), sql_number(spec$dtw_valid_range[2]),
-    as.integer(spec$reference_month), as.integer(spec$recent_years)
+      as.integer(spec$reference_month), as.integer(spec$recent_years)
+    )
   )
 }
 
 # Monthly means in the window plus check counts per well, see
 # gwl_monthly_sql(). About one row per well and month in the window.
 fetch_gwl_monthly <- function(spec) {
-  db_query(gwl_monthly_sql(spec))
+  db_query_wells(gwl_monthly_sql(spec), spec$well_elev)
 }
 
 # In-memory DuckDB. Newer duckdb versions ask where to keep extensions; none
@@ -496,9 +502,11 @@ combine_flags <- function(conds) {
   out
 }
 
-# One row per well (in the metadata, in the time series or both): screen
-# depths, mean depth to groundwater below ground surface, data quality and
-# whether the well is usable by the criteria in the config.
+# One row per well of the FARM master data (filled from gw_base,
+# fill_farm_meta()): screen depths, mean depth to groundwater below ground
+# surface, data quality and whether the well is usable by the criteria in
+# the config. The levels are read for these wells only, so every well is in
+# the metadata (in_meta); in_gwl: levels found.
 assess_well_dtw <- function(meta, gwl_stats, spec) {
   meta <- meta |>
     dplyr::mutate(n_meta_records = dplyr::n(), .by = well_id) |>
@@ -535,7 +543,8 @@ assess_well_dtw <- function(meta, gwl_stats, spec) {
       flags = combine_flags(stats::setNames(
         list(
           !in_meta,
-          in_meta & !in_gwl,
+          in_meta & !in_gw_base,
+          in_meta & in_gw_base & !in_gwl,
           in_gwl & dplyr::coalesce(n_obs_valid, 0) == 0,
           in_meta & is.na(elev_gs),
           in_meta & (is.na(screen_top) | is.na(screen_bot)),
@@ -551,6 +560,7 @@ assess_well_dtw <- function(meta, gwl_stats, spec) {
         ),
         c(
           "no metadata",
+          "not in gw_base (no levels)",
           "no groundwater levels",
           "no valid groundwater levels",
           "no elev_gs",
@@ -568,8 +578,9 @@ assess_well_dtw <- function(meta, gwl_stats, spec) {
       ))
     ) |>
     dplyr::select(
-      well_id, usable, in_meta, in_gwl,
-      x, y, elev_gs, screen_top, screen_bot, screen_length,
+      well_id, farm_id, state, usable, in_meta, in_gw_base, in_gwl,
+      x, y, elev_gs, elev_mp, screen_top, screen_bot, screen_length,
+      elev_gs_from, screen_top_from, screen_bot_from, coords_from,
       dtw_mean, dtw_mean_seasonal, dtw_shallowest, dtw_deepest, dtw_annual_low,
       water_table_vs_screen,
       first_valid_month, last_valid_month, recent, seasons_ok,
@@ -585,7 +596,7 @@ assess_well_dtw <- function(meta, gwl_stats, spec) {
 }
 
 # How far the data go: wells left after each criterion, as numbers and
-# shares of the metadata wells. Each "+" line adds a criterion to the
+# shares of the FARM wells. Each "+" line adds a criterion to the
 # line above.
 summarise_well_availability <- function(wells, spec) {
   m <- dplyr::filter(wells, in_meta)
@@ -597,7 +608,8 @@ summarise_well_availability <- function(wells, spec) {
   has_dtw <- !is.na(m$dtw_mean)
 
   items <- c(
-    "wells in metadata" = nrow(m),
+    "FARM wells" = nrow(m),
+    "... found in gw_base" = sum(m$in_gw_base),
     "... with elev_gs" = sum(has_gs),
     "... with screen_top and screen_bot" = sum(has_screen),
     "... with groundwater levels" = sum(m$in_gwl),
@@ -606,7 +618,7 @@ summarise_well_availability <- function(wells, spec) {
     "... + screen depths" = sum(has_gs & has_gwl & has_screen),
     "... + RECENT" = sum(has_gs & has_screen & recent),
     "... + SEASONS = usable" = sum(has_dtw & has_screen & recent & seasons),
-    "wells with groundwater levels but no metadata" = sum(!wells$in_meta)
+    "wells with groundwater levels but not in FARM" = sum(!wells$in_meta)
   )
   names(items) <- names(items) |>
     sub("RECENT", paste("data in the last", spec$recent_years, "years"), x = _, fixed = TRUE) |>
