@@ -112,7 +112,7 @@ well_stages <- function(wells, spec) {
     reason = c(
       NA,
       "no ground surface elevation",
-      "no valid groundwater levels (incl. wells not in gw_base)",
+      "no valid groundwater levels in any source",
       "no screen depths",
       paste("no data in the last", spec$recent_years, "years"),
       paste("a season in <", spec$min_years_per_season, "years")
@@ -1010,15 +1010,21 @@ plot_missing_screens <- function(points, germany, plot_config,
 # The preprocessing and filtering steps in short words, with the thresholds
 # from the settings: per step a title and the applied logic, grouped by where
 # the step works (single measurements, time series, wells, scenarios).
-method_steps <- function(spec, coverage) {
+method_steps <- function(spec, coverage, neighbour_radius_m = 10) {
   # numbers with a real minus sign
   m <- function(x) sub("^-", "\u2212", format(x, decimal.mark = ".", trim = TRUE, big.mark = ","))
   tibble::tribble(
     ~phase, ~title, ~logic,
     "Wells", "FARM master data, filled from gw_base",
       paste0("The wells of the FARM master data. Missing ground elevation, screen depths and ",
-             "coordinates are taken from the same well in gw_base (linked by state and ID); ",
-             "the levels come from gw_base."),
+             "coordinates are taken from the same well in gw_base, linked by state and ID ",
+             "(ID columns per source and state from config/id_mapping.csv)."),
+    "Wells", "Ground elevation from the measuring point",
+      paste0("Where the ground elevation is still missing: measuring point height minus the median ",
+             "stick-up of the state's FARM wells."),
+    "Wells", "Groundwater levels from three sources",
+      paste0("In this order: the state series (state deliveries and MENTOR), the linked gw_base ",
+             "well, the nearest gw_base well with levels within ", m(neighbour_radius_m), " m."),
     "Each measurement", "Complete records",
       "Keep measurements with well ID and date; an empty level counts as missing.",
     "Each measurement", "Error codes and impossible levels",
@@ -1058,10 +1064,10 @@ method_steps <- function(spec, coverage) {
   )
 }
 
-plot_method_flowchart <- function(spec, coverage, plot_config,
+plot_method_flowchart <- function(spec, coverage, plot_config, neighbour_radius_m = 10,
                                   font = setup_plot_font(plot_config$font)) {
   setup_plot_font(plot_config$font)
-  steps <- method_steps(spec, coverage)
+  steps <- method_steps(spec, coverage, neighbour_radius_m)
   wrap <- function(x, width) vapply(x, function(t) paste(strwrap(t, width), collapse = "\n"), character(1))
   # no line break between a number and its unit
   steps$logic <- gsub("([0-9]) (m|years|km)\\b", "\\1\u00a0\\2", steps$logic)

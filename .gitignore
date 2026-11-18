@@ -11,6 +11,8 @@ output/
 
 # data files and outputs ---------------------------------------------------------
 *.csv
+# configuration tables are tracked
+!config/*.csv
 *.parquet
 *.duckdb
 *.duckdb.wal

@@ -1,0 +1,5 @@
+source,state,farm_column,other_column,link,note
+gw_base,*,messstellen_id,well_id,id,FARM ID = gw_base well ID without the state prefix
+gw_base,MV,messstellen_id2,well_id,id,MV: the FARM ID matching gw_base is in messstellen_id2
+gw_base,NI,,,none,NI: hashed FARM IDs and no coordinates; no link to gw_base possible
+state_levels,*,messstellen_id,messstellen_id,id,state series under the FARM ID (messstellen_id of scripts/gw_timeseries_all_states.R)

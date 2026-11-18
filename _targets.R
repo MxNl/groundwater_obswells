@@ -77,15 +77,24 @@ list(
   # gw_base metadata (used to fill the FARM table): a checksum of the columns
   # used on every run (the table is small), so changed values (e.g. screen
   # depths filled in) rerun the metadata query
-  tar_target(meta_spec, meta_query_spec(well_spec)),
+  # ID mapping between FARM and the other sources, per source and state
+  # (config/id_mapping.csv): which FARM column holds the ID, which column of
+  # the other source it matches, or that the wells cannot be linked
+  tar_target(id_mapping_file, "config/id_mapping.csv", format = "file"),
+  tar_target(id_mapping, read_id_mapping(id_mapping_file)),
+  tar_target(meta_spec, meta_query_spec(well_spec, id_mapping)),
   tar_target(meta_checksum, fetch_meta_checksum(meta_spec), cue = tar_cue(mode = "always")),
   tar_target(gwbase_meta, fetch_well_meta(meta_spec, meta_checksum)),
 
   # The wells analysed: FARM master data, filled from gw_base -------------------
   # Where FARM has no ground elevation, screen depth or coordinates, the
   # value of the same well in gw_base is used (linked by state and ID: state
-  # prefix such as HE_, signs and leading zeros removed). Column names as in
-  # the file; case, umlauts, spaces and signs do not matter.
+  # prefix such as HE_, signs and leading zeros removed; ID columns from the
+  # mapping). A ground elevation still missing is estimated from the
+  # measuring point height minus the median stick-up of the state (of
+  # Germany where the state has fewer than stickup_min_pairs wells with both
+  # values). Column names as in the file; case, umlauts, spaces and signs do
+  # not matter.
   tar_target(
     farm_config,
     list(
@@ -95,28 +104,65 @@ list(
         elev_gs = "gok__m_nn_", elev_mp = "messpunkth\u00f6he__m_nn_",
         screen_top = "filter_ok_unter_gok", screen_bot = "filter_uk_unter_gok",
         x = "x", y = "y", epsg = "epsg"
-      )
+      ),
+      stickup_min_pairs = 10
     )
   ),
   tar_target(farm_file, farm_config$file, format = "file"),
-  tar_target(farm_meta, read_farm_meta(farm_file, farm_config)),
+  tar_target(farm_meta, read_farm_meta(farm_file, farm_config, id_mapping)),
   # one row per FARM well: the values used and where they come from
-  # (*_from: FARM, gw_base, missing); also output/well_meta_filled.csv
-  tar_target(well_meta, fill_farm_meta(farm_meta, gwbase_meta, well_config$crs)),
+  # (*_from: FARM, gw_base, estimated from measuring point, missing)
   tar_target(
-    farm_filling_plot,
-    plot_farm_filling(well_meta, plot_config, plot_font),
-    format = "file"
+    well_meta,
+    fill_farm_meta(farm_meta, gwbase_meta, id_mapping, well_config$crs, farm_config$stickup_min_pairs)
   ),
 
-  # Levels of the analysis wells ------------------------------------------------------
-  # only the settings the server queries use and the wells with their
-  # (filled) ground elevation: a change of other settings (spikes, years per
-  # season, scenarios, plots) does not rerun them
-  tar_target(query_spec, server_query_spec(well_spec, well_elevations(well_meta))),
-  tar_target(gwl_monthly, fetch_gwl_monthly(query_spec)),
+  # Levels of the analysis wells: three sources by priority ------------------------
+  # 1. the state level series (state deliveries and MENTOR), built by
+  #    scripts/gw_timeseries_all_states.R; its .RData output at
+  #    state_levels_file; 2. the linked gw_base well; 3. the nearest gw_base
+  #    well with levels within neighbour_radius_m.
+  tar_target(
+    level_config,
+    list(
+      # where the script writes it (dir_out); without the file only gw_base
+      # levels are used, with a warning
+      state_levels_file = "J:/PROJEKTE/FARM/Daten/Datenanalyse/Grundwasserstaende/final_output/gwl_timeseries_all_states.RData",
+      neighbour_radius_m = 10
+    )
+  ),
+  tar_target(
+    state_levels_info,
+    state_levels_file_info(level_config$state_levels_file),
+    cue = tar_cue(mode = "always")
+  ),
+  tar_target(state_levels, read_state_levels(state_levels_info, id_mapping)),
+  tar_target(state_series, link_state_levels(state_levels, well_meta)),
+  tar_target(level_counts_spec, level_count_spec(well_spec)),
+  tar_target(gwbase_level_counts, fetch_gwbase_level_counts(level_counts_spec)),
+  tar_target(
+    level_sources,
+    assign_level_sources(
+      well_meta, state_series, gwbase_level_counts, gwbase_meta, well_config$crs,
+      level_config$neighbour_radius_m, well_config$gwl_valid_range
+    )
+  ),
+  tar_target(well_meta_levels, add_level_sources(well_meta, level_sources)),
+  tar_target(
+    farm_filling_plot,
+    plot_farm_filling(well_meta_levels, plot_config, plot_font),
+    format = "file"
+  ),
+  # only the settings the server queries use and the gw_base wells whose
+  # levels are read, with the (filled) ground elevation: a change of other
+  # settings (spikes, years per season, scenarios, plots) does not rerun them
+  tar_target(query_spec, server_query_spec(well_spec, well_elevations(well_meta, level_sources))),
+  tar_target(gwl_monthly_gwbase, fetch_gwl_monthly(query_spec)),
+  tar_target(gwl_monthly_state, state_monthly(state_series, query_spec)),
+  # monthly means of every analysis well under its own well_id
+  tar_target(gwl_monthly, combine_monthly(gwl_monthly_gwbase, gwl_monthly_state, level_sources)),
   tar_target(gwl_stats, summarise_gwl_monthly(gwl_monthly, well_spec)),
-  tar_target(well_dtw, assess_well_dtw(well_meta, gwl_stats, well_spec)),
+  tar_target(well_dtw, assess_well_dtw(well_meta_levels, gwl_stats, well_spec)),
   tar_target(well_availability, summarise_well_availability(well_dtw, well_spec)),
   tar_target(gwl_checks, summarise_gwl_checks(well_dtw)),
 
@@ -183,7 +229,7 @@ list(
       distribution_max_m = 16,     # x axis of the distributions, m below ground
       caption = paste(
         "Data: FARM master data, filled from gw_base (tbl_meta_well_import);",
-        "groundwater levels gw_base (tbl_gwl_raw).",
+        "groundwater levels: state deliveries and MENTOR, gw_base (tbl_gwl_raw).",
         "Borders: Natural Earth."
       )
     )
@@ -259,7 +305,11 @@ list(
     threshold_query_settings,
     threshold_settings[c("history_years", "candidate_codes", "top_values")]
   ),
-  tar_target(gwl_year_seasons, fetch_year_seasons(query_spec, threshold_query_settings)),
+  tar_target(gwl_year_seasons_gwbase, fetch_year_seasons(query_spec, threshold_query_settings)),
+  tar_target(
+    gwl_year_seasons,
+    combine_year_seasons(gwl_year_seasons_gwbase, state_series, level_sources, query_spec, threshold_query_settings)
+  ),
   tar_target(gwl_depth_histogram, fetch_depth_histogram(query_spec)),
   tar_target(gwl_candidate_codes, fetch_candidate_codes(query_spec, threshold_query_settings)),
   tar_target(gwl_removed_values, fetch_removed_values(query_spec, threshold_query_settings)),
@@ -273,7 +323,7 @@ list(
   ),
   tar_target(
     method_flowchart_plot,
-    plot_method_flowchart(well_spec, coverage_settings, plot_config, plot_font),
+    plot_method_flowchart(well_spec, coverage_settings, plot_config, level_config$neighbour_radius_m, plot_font),
     format = "file"
   ),
   tar_target(

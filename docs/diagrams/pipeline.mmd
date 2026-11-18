@@ -1,0 +1,55 @@
+---
+title: "4 · Pipeline: main steps and their inputs (targets) · ADR 13, 14"
+config:
+  theme: base
+  themeVariables:
+    fontFamily: Noto Sans Display
+    fontSize: 15px
+    primaryTextColor: "#1f2937"
+    lineColor: "#94a3b8"
+    clusterBkg: "#f8fafc"
+    clusterBorder: "#e2e8f0"
+    titleColor: "#475569"
+  flowchart:
+    wrappingWidth: 230
+    padding: 16
+    nodeSpacing: 36
+    rankSpacing: 42
+    curve: basis
+---
+flowchart LR
+  classDef data fill:#dbeafe,stroke:#93c5fd,stroke-width:1px,color:#1e3a5f
+  classDef step fill:#f1f5f9,stroke:#cbd5e1,stroke-width:1px,color:#1f2937
+  classDef rule fill:#fef3c7,stroke:#f2cf6b,stroke-width:1px,color:#713f12
+  classDef out fill:#d1fae5,stroke:#86d9b9,stroke-width:1px,color:#064e3b
+
+  db[("SQL Server via ODBC: catalogue, D3, D4")]:::data
+  files[("Files: D1 FARM, D2 mapping, D5 state series")]:::data
+  cfg[("Settings in _targets.R")]:::data
+
+  cat("Catalogue and metadata checksum, every run"):::step
+  meta("well_meta: FARM filled from gw_base"):::step
+  src("level_sources"):::step
+  q("Server queries: monthly means, counts, seasons"):::step
+  loc("State series: monthly means in R"):::step
+  stats("Window statistics in DuckDB"):::step
+  dtw("well_dtw"):::step
+  sc("Scenarios"):::step
+  plots(["Figures and tables"]):::out
+  ref{{"Reference month, checked every run"}}:::rule
+
+  db --> cat --> meta
+  files --> meta
+  meta --> src
+  db --> src
+  files --> src
+  src --> q
+  src --> loc
+  ref --> q
+  q --> stats
+  loc --> stats
+  stats --> dtw --> sc --> plots
+  cfg --> meta
+  cfg --> sc
+
+  linkStyle default stroke-width:1.2px

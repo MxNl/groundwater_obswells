@@ -1,6 +1,6 @@
 # 2. Linking wells across sources by state and normalised ID
 
-- Status: accepted
+- Status: accepted; the ID columns per source and state: ADR 17
 - Date: 2026-11-17
 - Code: `R/link.R` (`norm_id()`, `norm_state()`, `state_from_id()`,
   `state_id_key()`), `R/farm.R` (`fill_farm_meta()`)

@@ -1,0 +1,66 @@
+---
+title: "3 · Scenarios"
+config:
+  theme: base
+  themeVariables:
+    fontFamily: Noto Sans Display
+    fontSize: 15px
+    primaryTextColor: "#1f2937"
+    lineColor: "#94a3b8"
+    clusterBkg: "#f8fafc"
+    clusterBorder: "#e2e8f0"
+    titleColor: "#475569"
+  flowchart:
+    wrappingWidth: 230
+    padding: 16
+    nodeSpacing: 36
+    rankSpacing: 42
+    curve: basis
+---
+flowchart TB
+  classDef data fill:#dbeafe,stroke:#93c5fd,stroke-width:1px,color:#1e3a5f
+  classDef step fill:#f1f5f9,stroke:#cbd5e1,stroke-width:1px,color:#1f2937
+  classDef rule fill:#fef3c7,stroke:#f2cf6b,stroke-width:1px,color:#713f12
+  classDef out fill:#d1fae5,stroke:#86d9b9,stroke-width:1px,color:#064e3b
+
+  dtw[("D9 · Usable wells, well_dtw")]:::data
+
+  subgraph crit ["Five criteria, one after the other · ADR 8, 9"]
+    direction TB
+    k1{{"1 · Mean depth in range"}}:::rule
+    k2{{"2 · Deepest month shallower than the limit"}}:::rule
+    k3{{"3 · Screen position: top and/or bottom relative to the mean water table"}}:::rule
+    k4{{"4 · Not falling dry: screen bottom below the average annual low"}}:::rule
+    k5{{"5 · Screen length in range"}}:::rule
+    k1 --> k2 --> k3 --> k4 --> k5
+  end
+
+  subgraph fixed ["Fixed thresholds · ADR 10"]
+    direction TB
+    f1("National (2020), FARM tolerant, EU (EFSA 2023), FARM strict, very shallow, screen at the water table"):::step
+  end
+
+  subgraph fit ["Fitted thresholds · ADR 11"]
+    direction TB
+    g1("All combinations of four thresholds on their grids"):::step
+    g2{{"Covers ≥ 80 % of the 50 km cells of the loosest combination"}}:::rule
+    g3("The strictest of them: even coverage"):::step
+    g1 --> g2 --> g3
+  end
+
+  sel[("D10 · Wells per scenario and criterion, scenario_wells")]:::data
+  grp("Each well once, in the most selective scenario it meets · ADR 12"):::step
+  o1(["Scenario maps and distributions"]):::out
+  o2(["Flow chart and Sankey diagrams of the scenarios"]):::out
+  o3(["Combined Sankey diagram"]):::out
+
+  dtw --> k1
+  f1 --> k1
+  dtw --> g1
+  g3 --> k1
+  k5 --> sel
+  sel --> o1
+  sel --> o2
+  sel --> grp --> o3
+
+  linkStyle default stroke-width:1.2px

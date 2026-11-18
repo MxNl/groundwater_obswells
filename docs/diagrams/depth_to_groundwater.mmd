@@ -1,0 +1,72 @@
+---
+title: "2 · From the level series to the usable wells"
+config:
+  theme: base
+  themeVariables:
+    fontFamily: Noto Sans Display
+    fontSize: 15px
+    primaryTextColor: "#1f2937"
+    lineColor: "#94a3b8"
+    clusterBkg: "#f8fafc"
+    clusterBorder: "#e2e8f0"
+    titleColor: "#475569"
+  flowchart:
+    wrappingWidth: 230
+    padding: 16
+    nodeSpacing: 36
+    rankSpacing: 42
+    curve: basis
+---
+flowchart TB
+  classDef data fill:#dbeafe,stroke:#93c5fd,stroke-width:1px,color:#1e3a5f
+  classDef step fill:#f1f5f9,stroke:#cbd5e1,stroke-width:1px,color:#1f2937
+  classDef rule fill:#fef3c7,stroke:#f2cf6b,stroke-width:1px,color:#713f12
+  classDef out fill:#d1fae5,stroke:#86d9b9,stroke-width:1px,color:#064e3b
+
+  srcs[("D7 · Level series of every well")]:::data
+  meta[("D6 · well_meta: ground elevation, screens")]:::data
+
+  subgraph checks ["Each measurement · ADR 3"]
+    direction TB
+    c1{{"Level present"}}:::rule
+    c2{{"Level −100 to 3,000 m a.s.l. (error codes)"}}:::rule
+    c3{{"Depth = ground elevation − level, −2 to 150 m"}}:::rule
+    c1 --> c2 --> c3
+  end
+  mon("Monthly means of the valid levels; gw_base on the server, state series in R"):::step
+  monthly[("D8 · Monthly means under the well's own ID, gwl_monthly")]:::data
+
+  subgraph series ["Time series · ADR 4, 5"]
+    direction TB
+    win("Recent window: last 10 years up to the current month"):::step
+    spike{{"Spike: > max(5 × MAD, 1 m) from the median and from both neighbouring months"}}:::rule
+    mwin("Mean window: the 5 most recent years with data"):::step
+    win --> spike --> mwin
+  end
+
+  subgraph depth ["Depths · ADR 7"]
+    direction TB
+    dm("Mean, deepest month and average annual low as depth below ground"):::step
+  end
+
+  subgraph usable ["Usable wells · ADR 6"]
+    direction TB
+    u1{{"Ground elevation, screen top and bottom"}}:::rule
+    u2{{"Data in the recent window"}}:::rule
+    u3{{"Each season in ≥ 5 of these years"}}:::rule
+    u1 --> u2 --> u3
+  end
+  dtw[("D9 · One row per well, well_dtw")]:::data
+  o1(["Flow chart, Sankey diagrams, drop-out per state"]):::out
+  o2(["Diagnostic sheets, threshold figures · ADR 15"]):::out
+
+  srcs --> c1
+  meta --> c3
+  c3 --> mon --> monthly --> win
+  mwin --> dm --> u1
+  meta --> u1
+  u3 --> dtw
+  dtw --> o1
+  monthly --> o2
+
+  linkStyle default stroke-width:1.2px

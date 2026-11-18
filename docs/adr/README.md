@@ -8,16 +8,22 @@ The records were written after the fact, from the code, the commit history
 and the discussions while the project was built; "Alternatives considered"
 lists options that were discussed or are the obvious alternatives. Settings
 named in the records are in `_targets.R` (`well_config`, `farm_config`,
-`scenarios_fixed`, `coverage_settings`, `threshold_settings`,
-`check_settings`), with the values in effect when the record was written.
+`level_config`, `scenarios_fixed`, `coverage_settings`, `threshold_settings`,
+`check_settings`) and `config/id_mapping.csv`, with the values in effect
+when the record was written. Within a topic, records are listed in the order
+of the method, so their numbers are not always in order.
 
 ## Wells and metadata
 
 - [1. FARM master data as the wells analysed, filled from gw_base](0001-farm-master-data-as-well-base.md)
 - [2. Linking wells across sources by state and normalised ID](0002-linking-wells-by-state-and-id.md)
+- [17. ID columns per source and state from a mapping table](0017-id-mapping-table.md)
+- [20. Missing ground elevations estimated from the measuring point](0020-ground-elevation-from-measuring-point.md)
 
 ## Groundwater levels and depth
 
+- [18. Groundwater levels from three sources by priority](0018-levels-from-three-sources.md)
+- [19. The state level series come from a separate script](0019-state-series-from-the-delivery-script.md)
 - [3. Checks of single levels and monthly means on SQL Server](0003-level-checks-and-monthly-means-on-the-server.md)
 - [4. A recent window and a mean window of the most recent years](0004-recent-window-and-mean-window.md)
 - [5. Spikes: far from the median and from both neighbouring months](0005-spike-rule-with-neighbour-condition.md)
@@ -41,6 +47,18 @@ named in the records are in `_targets.R` (`well_config`, `farm_config`,
 ## Source check (temporary)
 
 - [16. A temporary check of the metadata against other sources](0016-source-check.md)
+
+## Method diagrams
+
+Flow charts of the methods are in [`../diagrams/`](../diagrams/README.md) as
+Mermaid files (`.mmd`), rendered as SVG next to them. In Quarto they can be
+used directly:
+
+````markdown
+```{mermaid}
+%%| file: diagrams/wells_and_levels.mmd
+```
+````
 
 ## Format
 

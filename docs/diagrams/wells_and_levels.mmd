@@ -1,0 +1,77 @@
+---
+title: "1 · Wells, metadata and level series"
+config:
+  theme: base
+  themeVariables:
+    fontFamily: Noto Sans Display
+    fontSize: 15px
+    primaryTextColor: "#1f2937"
+    lineColor: "#94a3b8"
+    clusterBkg: "#f8fafc"
+    clusterBorder: "#e2e8f0"
+    titleColor: "#475569"
+  flowchart:
+    wrappingWidth: 230
+    padding: 16
+    nodeSpacing: 36
+    rankSpacing: 42
+    curve: basis
+---
+flowchart TB
+  classDef data fill:#dbeafe,stroke:#93c5fd,stroke-width:1px,color:#1e3a5f
+  classDef step fill:#f1f5f9,stroke:#cbd5e1,stroke-width:1px,color:#1f2937
+  classDef rule fill:#fef3c7,stroke:#f2cf6b,stroke-width:1px,color:#713f12
+  classDef out fill:#d1fae5,stroke:#86d9b9,stroke-width:1px,color:#064e3b
+
+  farm[("D1 · FARM master data")]:::data
+  map[("D2 · ID mapping per source and state, config/id_mapping.csv")]:::data
+  gwmeta[("D3 · gw_base metadata, tbl_meta_well_import")]:::data
+  gwl[("D4 · gw_base levels, tbl_gwl_raw")]:::data
+  st[("D5 · State level series: state deliveries and MENTOR")]:::data
+
+  subgraph link ["Linking · ADR 2, 17"]
+    direction TB
+    key("Key: state + ID without state prefix, signs and leading zeros"):::step
+    cols("ID columns per source and state from the mapping (MV: messstellen_id2)"):::step
+    none{{"Not linkable: NI (hashed IDs, no coordinates)"}}:::rule
+    cols --> key
+    cols --> none
+  end
+
+  subgraph fill ["Metadata of each FARM well · ADR 1, 20"]
+    direction TB
+    farmv("Value from FARM"):::step
+    gwv("Else from the linked gw_base well"):::step
+    mp("Ground elevation still missing: measuring point minus median stick-up of the state"):::step
+    farmv --> gwv --> mp
+  end
+  meta[("D6 · Analysis table well_meta, with the origin of every value")]:::data
+
+  subgraph lev ["Level series by priority · ADR 18, 19"]
+    direction TB
+    p1("1 · State series of the well"):::step
+    p2("2 · Series of the linked gw_base well"):::step
+    p3("3 · Nearest gw_base well with levels within 10 m"):::step
+    has{{"Data: at least one level in the valid range"}}:::rule
+    p1 --> p2 --> p3
+    has -.- p1
+  end
+  srcs[("D7 · Level source of every well, level_sources")]:::data
+  o1(["Where the values and the levels come from, per state"]):::out
+
+  farm --> cols
+  map --> cols
+  gwmeta --> key
+  key --> farmv
+  gwmeta --> gwv
+  farm --> farmv
+  mp --> meta
+  meta --> p1
+  st --> p1
+  gwl --> p2
+  gwmeta --> p3
+  p3 --> srcs
+  meta --> o1
+  srcs --> o1
+
+  linkStyle default stroke-width:1.2px

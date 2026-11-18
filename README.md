@@ -98,31 +98,69 @@ and one `scenario_<id>.png` per scenario.
 
 The wells analysed are the records of the FARM master data
 (`farm_config$file`; column names in `farm_config$columns`, case, umlauts,
-spaces and signs do not matter). Each FARM well is linked to gw_base
-(`tbl_meta_well_import`) by state and ID: the state from the state column
-(codes or names) or an ID prefix, the IDs with a state prefix such as `HE_`,
-all signs other than letters and digits and leading zeros removed
-(`R/link.R`). Where FARM has no ground elevation, screen top or bottom or
-coordinates, the value of the linked gw_base well is used.
+spaces and signs do not matter). Each FARM well is linked to the other
+sources by state and ID: the state from the state column (codes or names) or
+an ID prefix, the IDs with a state prefix such as `HE_`, all signs other than
+letters and digits and leading zeros removed (`R/link.R`).
 
-`well_meta` has one row per FARM record: `well_id` (the gw_base ID, under
-which the levels are read; `<state>_<FARM ID>` for wells not found in
-gw_base), `farm_id`, `state`, `in_gw_base`, the values used (coordinates in
-EPSG 25832; FARM codes PROJ does not know, such as 0, are guessed from the
-coordinates) and per field where the value comes from (`elev_gs_from`,
-`screen_top_from`, `screen_bot_from`, `coords_from`: FARM, gw_base, missing
-in both, or missing and the well not found in gw_base).
+Which ID columns belong together is set per source and state in
+`config/id_mapping.csv` (tracked):
+
+| Column | Meaning |
+|---|---|
+| `source` | `gw_base` (metadata) or `state_levels` (state level series) |
+| `state` | state code, or `*` for all states without a row of their own |
+| `farm_column` | FARM column with the ID (e.g. `messstellen_id2` for MV) |
+| `other_column` | column of the other source (gw_base: `well_id` or another metadata column; state series: `messstellen_id` or `id_alt`) |
+| `link` | `id`, or `none` where the wells cannot be linked (NI: hashed FARM IDs, no coordinates) |
+| `note` | why |
+
+Where FARM has no ground elevation, screen top or bottom or coordinates, the
+value of the linked gw_base well is used. A ground elevation still missing
+is estimated from the FARM measuring point height minus the median stick-up
+(measuring point minus ground elevation) of the state's FARM wells with both
+values (of Germany where a state has fewer than `stickup_min_pairs`, 10;
+`output/farm_stickup.csv`).
+
+`well_meta` has one row per FARM record: `well_id` (the gw_base ID;
+`<state>_<FARM ID>` for wells not linked to gw_base), `farm_id`, `state`,
+`in_gw_base`, `gwbase_link` (how the link was made, or why not), the values
+used (coordinates in EPSG 25832; FARM codes PROJ does not know, such as 0,
+are guessed from the coordinates) and per field where the value comes from
+(`elev_gs_from`, `screen_top_from`, `screen_bot_from`, `coords_from`: FARM,
+gw_base, estimated from measuring point, missing in both, or missing and the
+well not linked to gw_base).
+
+### Groundwater levels: three sources by priority
+
+Each FARM well takes its level series from the first source with data (at
+least one level inside `gwl_valid_range`):
+
+1. the state level series: state deliveries and MENTOR, built by
+   `scripts/gw_timeseries_all_states.R` (run it when deliveries change; the
+   pipeline reads its .RData at `level_config$state_levels_file` and reruns
+   when the file changes; without the file only gw_base is used, with a
+   warning). Levels in m a.s.l.; where only a depth was delivered, the level
+   is ground elevation minus depth (below ground) or measuring point minus
+   depth (below the measuring point, RP and the BW Abstich);
+2. the linked gw_base well (`tbl_gwl_raw`);
+3. the nearest gw_base well with levels within `neighbour_radius_m` (10 m)
+   of the well's coordinates.
+
+`level_sources` (and the columns `level_source`, `level_id`,
+`level_distance_m` of `well_dtw`) tell which series a well uses. The levels
+count as the well's own: the depths use its own (filled) ground elevation,
+and the monthly means are stored under its `well_id` (`gwl_monthly`). The
+gw_base series are checked and averaged on the server, the state series in
+R with the same checks.
+
 `plots/farm_filling.png` and `output/farm_filling.csv` show per field and
-state how many values come from FARM, were filled or stay missing;
+state where the values come from and which source gives the levels;
 `output/well_meta_filled.csv` holds the table.
-
-The groundwater levels come from gw_base (`tbl_gwl_raw`), so FARM wells not
-found there have none (flag "not in gw_base (no levels)"). Only the levels
-of the linked wells are read.
 
 ## Depth to groundwater
 
-`well_dtw` has one row per FARM well, from `well_meta` and `tbl_gwl_raw`.
+`well_dtw` has one row per FARM well, from `well_meta` and its level series.
 Table and column names, thresholds and criteria are set in `well_config` in
 `_targets.R`.
 
@@ -254,7 +292,8 @@ columns used. The queries rerun when:
 - rows are added or deleted (row counts),
 - values in the gw_base metadata change (checksum over well ID, ground
   elevation, screen depths and coordinates): the metadata query reruns,
-- the FARM file changes,
+- the FARM file, the ID mapping or the file of the state level series
+  changes (time and size of the state file are checked on every run),
 - the analysis wells or their (filled) ground elevations change: the level
   queries rerun, as they read only these wells and check the depth below
   ground,
@@ -340,7 +379,8 @@ in `R/link.R`). Needs the package readxl.
 The decisions behind the data and methods (wells and linking, level checks,
 windows, spikes, usable wells, scenarios, workflow) are recorded in
 [`docs/adr/`](docs/adr/README.md), one file per decision, in the same format
-as in the other projects.
+as in the other projects; flow charts of the methods (Mermaid, for Quarto)
+are in [`docs/diagrams/`](docs/diagrams/README.md).
 
 ## Planned
 

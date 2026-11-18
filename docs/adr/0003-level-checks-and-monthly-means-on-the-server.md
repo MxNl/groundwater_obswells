@@ -1,6 +1,6 @@
 # 3. Checks of single levels and monthly means on SQL Server
 
-- Status: accepted
+- Status: accepted; for the gw_base series (state series: ADR 18)
 - Date: 2026-11-04 (filled ground elevations: 2026-11-17)
 - Code: `R/wells.R` (`checked_measurements_cte()`, `gwl_monthly_sql()`),
   `R/db.R` (`db_query_wells()`); settings `gwl_valid_range` (-100 to 3,000 m

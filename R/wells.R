@@ -150,9 +150,15 @@ server_query_spec <- function(spec, wells) {
   out
 }
 
-# The part of the spec the metadata queries of gw_base use.
-meta_query_spec <- function(spec) {
-  spec[c("meta_schema", "meta_table", "meta_id", "elev_gs", "screen_top", "screen_bot", "x", "y", "meta_n_rows")]
+# The part of the spec the metadata queries of gw_base use, with the further
+# gw_base ID columns the ID mapping links by (other_column of source
+# gw_base; "well_id" stands for the metadata ID column meta_id).
+meta_query_spec <- function(spec, mapping = NULL) {
+  out <- spec[c("meta_schema", "meta_table", "meta_id", "elev_gs", "screen_top", "screen_bot", "x", "y", "meta_n_rows")]
+  ids <- if (is.null(mapping)) character(0) else
+    mapping$other_column[mapping$source == "gw_base" & mapping$link == "id"]
+  out$extra_ids <- setdiff(unique(stats::na.omit(ids)), c("well_id", spec$meta_id))
+  out
 }
 
 # Checksum of the gw_base metadata columns used (well ID, ground elevation,
@@ -182,17 +188,20 @@ fetch_meta_checksum <- function(spec) {
 # fill the FARM table). `checksum` is not used here: it only makes the
 # target rerun when the metadata change.
 fetch_well_meta <- function(spec, checksum = NULL) {
+  extra <- vapply(spec$extra_ids %||% character(0), function(col) {
+    sprintf(",\n            CAST(%s AS nvarchar(100)) AS %s", sql_ident(col), sql_ident(col))
+  }, character(1))
   sql <- sprintf(
     "SELECT CAST(%s AS nvarchar(100)) AS well_id,
             CAST(%s AS float) AS elev_gs,
             CAST(%s AS float) AS screen_top,
             CAST(%s AS float) AS screen_bot,
             CAST(%s AS float) AS x,
-            CAST(%s AS float) AS y
+            CAST(%s AS float) AS y%s
      FROM %s.%s",
     sql_ident(spec$meta_id), sql_ident(spec$elev_gs),
     sql_ident(spec$screen_top), sql_ident(spec$screen_bot),
-    sql_ident(spec$x), sql_ident(spec$y),
+    sql_ident(spec$x), sql_ident(spec$y), paste(extra, collapse = ""),
     sql_ident(spec$meta_schema), sql_ident(spec$meta_table)
   )
   db_query(sql)
@@ -503,10 +512,11 @@ combine_flags <- function(conds) {
 }
 
 # One row per well of the FARM master data (filled from gw_base,
-# fill_farm_meta()): screen depths, mean depth to groundwater below ground
-# surface, data quality and whether the well is usable by the criteria in
-# the config. The levels are read for these wells only, so every well is in
-# the metadata (in_meta); in_gwl: levels found.
+# fill_farm_meta(), with its level source, add_level_sources()): screen
+# depths, mean depth to groundwater below ground surface, data quality and
+# whether the well is usable by the criteria in the config. The levels are
+# read for these wells only (under their own well_id, combine_monthly()), so
+# every well is in the metadata (in_meta); in_gwl: levels found.
 assess_well_dtw <- function(meta, gwl_stats, spec) {
   meta <- meta |>
     dplyr::mutate(n_meta_records = dplyr::n(), .by = well_id) |>
@@ -543,8 +553,9 @@ assess_well_dtw <- function(meta, gwl_stats, spec) {
       flags = combine_flags(stats::setNames(
         list(
           !in_meta,
-          in_meta & !in_gw_base,
-          in_meta & in_gw_base & !in_gwl,
+          in_meta & level_source %in% "none",
+          in_meta & !level_source %in% "none" & !in_gwl,
+          grepl("within", level_source),
           in_gwl & dplyr::coalesce(n_obs_valid, 0) == 0,
           in_meta & is.na(elev_gs),
           in_meta & (is.na(screen_top) | is.na(screen_bot)),
@@ -560,8 +571,9 @@ assess_well_dtw <- function(meta, gwl_stats, spec) {
         ),
         c(
           "no metadata",
-          "not in gw_base (no levels)",
+          "no level series in any source",
           "no groundwater levels",
+          "levels of a nearby gw_base well",
           "no valid groundwater levels",
           "no elev_gs",
           "no screen depths",
@@ -579,6 +591,7 @@ assess_well_dtw <- function(meta, gwl_stats, spec) {
     ) |>
     dplyr::select(
       well_id, farm_id, state, usable, in_meta, in_gw_base, in_gwl,
+      level_source, level_id, level_distance_m,
       x, y, elev_gs, elev_mp, screen_top, screen_bot, screen_length,
       elev_gs_from, screen_top_from, screen_bot_from, coords_from,
       dtw_mean, dtw_mean_seasonal, dtw_shallowest, dtw_deepest, dtw_annual_low,
@@ -610,6 +623,8 @@ summarise_well_availability <- function(wells, spec) {
   items <- c(
     "FARM wells" = nrow(m),
     "... found in gw_base" = sum(m$in_gw_base),
+    "... with a level series (state data, gw_base or a gw_base well nearby)" =
+      sum(!m$level_source %in% "none"),
     "... with elev_gs" = sum(has_gs),
     "... with screen_top and screen_bot" = sum(has_screen),
     "... with groundwater levels" = sum(m$in_gwl),
