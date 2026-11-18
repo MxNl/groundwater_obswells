@@ -136,17 +136,21 @@ well not linked to gw_base).
 Each FARM well takes its level series from the first source with data (at
 least one level inside `gwl_valid_range`):
 
-1. the state level series: state deliveries and MENTOR, read by the
-   pipeline from the delivery folders (`state_levels_config`;
-   `R/state_levels.R`, formerly the script `gw_timeseries_all_states.R`).
-   Size and time of every input file are checked on every run, so changed
-   deliveries rebuild the series; a state whose files cannot be read is left
+1. the state level series: the state deliveries, read by the pipeline from
+   the delivery folders (`state_levels_config`; `R/state_levels.R`). Size
+   and time of every input file are checked on every run, so changed
+   deliveries rebuild the series. MENTOR level data are not used
+   (`use_mentor = FALSE`; they are also in gw_base); the MENTOR master data
+   tables for ground elevations and IDs are read. Only the rows of wells that
+   can be linked to a FARM well are kept. Text files are read as UTF-8 or,
+   if not valid, as Windows-1252. A state whose files cannot be read is left
    out with a warning (no reader yet: SL, ST, SN, TH).
-   `output/state_levels_wells.csv` lists the wells of the series,
-   `output/state_levels_log.csv` per state the rows read or the error. Levels in
-   m a.s.l.; where only a depth was delivered, the level is ground elevation
-   minus depth (below ground) or measuring point minus depth (below the
-   measuring point, RP and the BW Abstich);
+   `output/state_levels_log.csv` lists per state the rows read and kept, the
+   wells kept, notes (e.g. an Excel export at the row limit of a sheet,
+   probably cut off) or the error; `output/state_levels_wells.csv` the wells
+   of the series. Levels in m a.s.l.; where only a depth was delivered, the
+   level is ground elevation minus depth (below ground) or measuring point
+   minus depth (below the measuring point, RP and the BW Abstich);
 2. the linked gw_base well (`tbl_gwl_raw`);
 3. the nearest gw_base well with levels within `neighbour_radius_m` (10 m)
    of the well's coordinates.

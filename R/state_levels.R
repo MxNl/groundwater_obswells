@@ -81,6 +81,10 @@ sl_gok_by_priority <- function(tabs) {
 # MENTOR rows of one or more state codes (bl, messstellen_id, datum,
 # nn_messwert)
 sl_mentor <- function(mentor, state) {
+  if (is.null(mentor)) {
+    return(tibble::tibble(messstellen_id = character(), datum = as.Date(character()),
+                          gwl_m_nhn = numeric(), source = character()))
+  }
   m <- mentor[mentor$bl %in% state, ]
   tibble::tibble(
     messstellen_id = sl_id(m$messstellen_id),
@@ -88,6 +92,29 @@ sl_mentor <- function(mentor, state) {
     gwl_m_nhn = sl_num(m$nn_messwert),
     source = "mentor"
   )
+}
+
+# A delimited text file with all columns as text: read as UTF-8, and again
+# as Windows-1252 if any text is not valid UTF-8 (older deliveries).
+sl_read_text <- function(path, delim, reader = readr::read_delim, ...) {
+  read <- function(encoding) {
+    reader(path, delim = delim, locale = readr::locale(encoding = encoding), progress = FALSE, ...)
+  }
+  d <- read("UTF-8")
+  text <- vapply(d, is.character, logical(1))
+  if (any(!vapply(d[text], function(x) all(validUTF8(x[!is.na(x)])), logical(1)))) d <- read("windows-1252")
+  d
+}
+
+# An Excel sheet; a note (warning) if it reaches the row limit of Excel
+# (1,048,576 rows): the export is then probably cut off.
+sl_read_excel <- function(path, ...) {
+  d <- readxl::read_excel(path, ...)
+  if (nrow(d) >= 1048570) {
+    warning(basename(path), ": ", nrow(d), " rows, the row limit of an Excel sheet; ",
+            "the export is probably cut off.", call. = FALSE)
+  }
+  d
 }
 
 # ---- readers per state -------------------------------------------------------------
@@ -111,7 +138,7 @@ sl_read_mv <- function(cfg, mentor) {
     laender_messpunkt = tibble::tibble(messstellen_id = sl_col(stamm_db, "Messtellen.ID"),
                                        gok = sl_col(stamm_db, "Messpunkth\u00f6he..m.NN."))
   ))
-  w <- readxl::read_excel(file.path(cfg$dir_orig, "MV/Lieferung2/Excel_export/GEODIN_MES_WSTTAB01.xlsx"))
+  w <- sl_read_excel(file.path(cfg$dir_orig, "MV/Lieferung2/Excel_export/GEODIN_MES_WSTTAB01.xlsx"))
   laender <- tibble::tibble(
     messstellen_id = sl_id(w$INVID), datum = sl_date(w$SMPDATE), gwl_m_nhn = sl_num(w$WASSPNN),
     source = "laender"
@@ -133,8 +160,8 @@ sl_read_sh <- function(cfg, mentor) {
   s_m <- readxl::read_excel(file.path(cfg$dir_gwst, "info_mentor/Stammdaten_SH.xlsx"))
   stamm_m <- tibble::tibble(messstellen_id = sl_col(s_m, "Nummer"), gok = sl_col(s_m, "Gel\u00e4ndeh\u00f6he"))
   # columns by position: 2 = Messstellen_ID, 3 = date, 6 = level above sea level
-  w <- readr::read_delim(file.path(cfg$dir_orig, "SH/GW/Grundwasserstaende_Messstellen_FARM_SH.txt"),
-                         delim = ";", col_types = readr::cols(.default = readr::col_character()))
+  w <- sl_read_text(file.path(cfg$dir_orig, "SH/GW/Grundwasserstaende_Messstellen_FARM_SH.txt"),
+                    delim = ";", col_types = readr::cols(.default = readr::col_character()))
   laender <- tibble::tibble(
     messstellen_id = sl_id(w[[2]]), datum = sl_date(w[[3]], "%d.%m.%Y"), gwl_m_nhn = sl_num_de(w[[6]]),
     source = "laender"
@@ -145,20 +172,48 @@ sl_read_sh <- function(cfg, mentor) {
   dplyr::bind_rows(laender, mentor_sh)
 }
 
-# BB: files without header (X1 = date, X2 = level); the ID is in the file name
+# BB: files without header (date and level); the ID is in the file name.
+# Each file is read on its own with its separator (";", tab, "," or
+# spaces) detected from its first line; lines without a valid date (e.g. a
+# header) are skipped.
+sl_read_bb_file <- function(file) {
+  lines <- readLines(file, warn = FALSE, encoding = "latin1")
+  lines <- trimws(lines[nzchar(trimws(lines))])
+  if (length(lines) == 0) return(NULL)
+  # the first separator that gives a date and a second field in the first
+  # lines with a date
+  probe <- utils::head(lines, 20)
+  sep <- NA_character_
+  for (cand in c(";", "\t", ",", "[[:space:]]+")) {
+    p <- strsplit(probe, cand, perl = TRUE)
+    ok <- vapply(p, function(f) length(f) >= 2 && grepl("^[0-9]{1,2}\\.[0-9]{1,2}\\.[0-9]{4}$", trimws(f[1])), logical(1))
+    if (any(ok)) {
+      sep <- cand
+      break
+    }
+  }
+  if (is.na(sep)) return(NULL)
+  parts <- strsplit(lines, sep, perl = TRUE)
+  tibble::tibble(
+    datum = sl_date(trimws(vapply(parts, function(f) f[1], character(1))), "%d.%m.%Y"),
+    gwl_m_nhn = sl_num(vapply(parts, function(f) if (length(f) >= 2) f[2] else NA_character_, character(1)))
+  )
+}
+
 sl_read_bb_folder <- function(path, file_suffix) {
   files <- list.files(path, pattern = "csv", full.names = TRUE, recursive = TRUE)
   if (length(files) == 0) return(NULL)
-  d <- readr::read_delim(files, delim = ";", col_names = FALSE, id = "file",
-                         col_types = readr::cols(.default = readr::col_character()))
-  id <- regmatches(d$file, regexec(paste0("exp\\s*(.*?)\\s*_", file_suffix), d$file))
+  id <- regmatches(basename(files), regexec(paste0("exp\\s*(.*?)\\s*_", file_suffix), basename(files)))
   id <- vapply(id, function(m) if (length(m) >= 2) m[2] else NA_character_, character(1))
-  tibble::tibble(
-    messstellen_id = sl_id(suppressWarnings(as.numeric(id))),
-    datum = sl_date(d$X1, "%d.%m.%Y"),
-    gwl_m_nhn = sl_num(d$X2)
-  ) |>
-    dplyr::filter(!is.na(datum), !is.na(gwl_m_nhn))
+  parts <- lapply(seq_along(files), function(k) {
+    d <- sl_read_bb_file(files[k])
+    if (is.null(d) || nrow(d) == 0) return(NULL)
+    d$messstellen_id <- sl_id(suppressWarnings(as.numeric(id[k])))
+    d
+  })
+  dplyr::bind_rows(parts) |>
+    dplyr::filter(!is.na(datum), !is.na(gwl_m_nhn)) |>
+    dplyr::select(messstellen_id, datum, gwl_m_nhn)
 }
 
 sl_read_bb <- function(cfg, mentor) {
@@ -190,7 +245,7 @@ sl_read_bw <- function(cfg, mentor) {
     messstellen_id = fix_id(sl_col(st, "GW-Nummer")), gok = sl_col(st, "Gel\u00e4ndeh\u00f6he [m +NN]")
   )))
   # columns by position: 1 = GW-Nummer, 3 = date, 7 = unit, 8 = value
-  w <- readxl::read_excel(file.path(cfg$dir_orig, "BW/Grundwasserstand-Daten_FARM_LUBW_211221.xlsx"))
+  w <- sl_read_excel(file.path(cfg$dir_orig, "BW/Grundwasserstand-Daten_FARM_LUBW_211221.xlsx"))
   laender <- tibble::tibble(
     messstellen_id = fix_id(w[[1]]), datum = sl_date(w[[3]]), gwl_m_nhn = sl_num(w[[8]]),
     unit = as.character(w[[7]]), source = "laender"
@@ -229,7 +284,7 @@ sl_read_by <- function(cfg, mentor) {
   stamm_bde <- tibble::tibble(messstellen_id = stamm$Objektkennzahl, gok = stamm$G_HOEHE)
   gok_l <- sl_gok_by_priority(list(bde_stamm = stamm_bde, mentor_stamm = stamm_mentor))
   gok_m <- sl_gok_by_priority(list(mentor_stamm = stamm_mentor, bde_stamm = stamm_bde))
-  s8 <- readxl::read_excel(f_bde, sheet = 8, col_types = "text")[-(1:2), ]
+  s8 <- sl_read_excel(f_bde, sheet = 8, col_types = "text")[-(1:2), ]
   s8 <- dplyr::left_join(
     s8, dplyr::distinct(stamm, OBJEKTID, .keep_all = TRUE) |> dplyr::select(OBJEKTID, Objektkennzahl, INFOWAS_LGD_MSNR),
     by = "OBJEKTID"
@@ -242,12 +297,16 @@ sl_read_by <- function(cfg, mentor) {
     dplyr::left_join(gok_l, by = "messstellen_id")
   mentor_by <- sl_mentor(mentor, "BY") |>
     dplyr::mutate(id_alt = messstellen_id, messstellen_id = to_farm_id(messstellen_id))
-  # later MENTOR delivery (Nachlieferung): LGD number, date, level
-  nl <- tibble::as_tibble(sl_load_one(file.path(cfg$dir_gwst, "neuer_Abgleich_Mentor/nachlieferung_BY_mentor_stamm.RData")))
-  nachlieferung <- tibble::tibble(
-    id_alt = sl_id(nl$messstellen_id), messstellen_id = to_farm_id(sl_id(nl$messstellen_id)),
-    datum = sl_date(nl$date), gwl_m_nhn = sl_num(nl$gwl), source = "mentor_nachlieferung"
-  )
+  # later MENTOR delivery (Nachlieferung): LGD number, date, level; only
+  # when MENTOR is used
+  nachlieferung <- NULL
+  if (!is.null(mentor)) {
+    nl <- tibble::as_tibble(sl_load_one(file.path(cfg$dir_gwst, "neuer_Abgleich_Mentor/nachlieferung_BY_mentor_stamm.RData")))
+    nachlieferung <- tibble::tibble(
+      id_alt = sl_id(nl$messstellen_id), messstellen_id = to_farm_id(sl_id(nl$messstellen_id)),
+      datum = sl_date(nl$date), gwl_m_nhn = sl_num(nl$gwl), source = "mentor_nachlieferung"
+    )
+  }
   dplyr::bind_rows(
     laender,
     dplyr::bind_rows(mentor_by, nachlieferung) |> dplyr::left_join(gok_m, by = "messstellen_id")
@@ -260,7 +319,7 @@ sl_read_he <- function(cfg, mentor) {
   stamm_l$messstellen_id <- sl_id(stamm_l$ID)
   sm <- readxl::read_excel(file.path(cfg$dir_gwst, "info_mentor/Stammdaten_HE.xlsx"))
   stamm_m <- tibble::tibble(messstellen_id = sl_id(sm$ID), gok = sm$GELAENDEHOEHE)
-  w <- readxl::read_excel(f_he, sheet = 3)
+  w <- sl_read_excel(f_he, sheet = 3)
   laender <- tibble::tibble(
     messstellen_id = sl_id(w$MESSSTELLE_ID), datum = sl_date(w$MESSDATUM), gwl_m_nhn = sl_num(w$MESSWERT),
     source = "laender"
@@ -280,7 +339,7 @@ sl_read_he <- function(cfg, mentor) {
 
 sl_read_rp <- function(cfg, mentor) {
   # the state data only contain the depth below the measuring point
-  w <- readxl::read_excel(file.path(cfg$dir_orig, "RP/RP_GW_Messst_PSM_nrM_Werte.xlsx"), sheet = 2)
+  w <- sl_read_excel(file.path(cfg$dir_orig, "RP/RP_GW_Messst_PSM_nrM_Werte.xlsx"), sheet = 2)
   w <- w[w$STOFF_BEZ %in% "Wasserstand unter Messpunkt", ]
   laender <- tibble::tibble(
     messstellen_id = sl_id(w$MESSST_NR), datum = sl_date(w$ANA_DATUM), depth_m = sl_num(w$WERT),
@@ -318,8 +377,7 @@ sl_read_ni <- function(cfg, mentor) {
     "WSP_Monatsmittelwerte_2010_2020_Gruppe_aus_Taberst_NI_FARM-Stammdaten_xlsx.csv"
   )
   # monthly values 2010-2020: mean, minimum and maximum level per month
-  w <- readr::read_csv2(f_ni, col_types = readr::cols(`ID Messstelle` = readr::col_character(),
-                                                      Monat = readr::col_character()))
+  w <- sl_read_text(f_ni, delim = ";", col_types = readr::cols(.default = readr::col_character()))
   laender <- tibble::tibble(
     messstellen_id = sl_id(w$`ID Messstelle`), datum = sl_month_to_date(w$Monat),
     gwl_m_nhn = sl_num(w$`mittlerer GW-Stand`), gwl_min_period = sl_num(w$`min. GW-Stand`),
@@ -335,8 +393,8 @@ sl_read_ni <- function(cfg, mentor) {
 sl_read_nw <- function(cfg, mentor) {
   # LANUV open data (all NRW wells): level, depth, ground elevation; decimal
   # point; IDs with leading zeros, so read as text
-  raw <- readr::read_delim(file.path(cfg$dir_orig, "NRW/wasserstand/opendata.gw_wasserstand.csv"),
-                           delim = ";", col_types = readr::cols(.default = readr::col_character()))
+  raw <- sl_read_text(file.path(cfg$dir_orig, "NRW/wasserstand/opendata.gw_wasserstand.csv"),
+                      delim = ";", col_types = readr::cols(.default = readr::col_character()))
   laender <- tibble::tibble(
     messstellen_id = raw$messstelle_id, datum = sl_date(raw$datum_messung, "%Y%m%d"),
     gwl_m_nhn = sl_num(raw$wasserstd_m), depth_m = sl_num(raw$flurabstd_m),
@@ -365,8 +423,9 @@ state_level_readers <- list(
 state_level_input_info <- function(cfg) {
   o <- cfg$dir_orig
   g <- cfg$dir_gwst
+  mentor <- isTRUE(cfg$use_mentor)
   files <- c(
-    file.path(g, "mentor_grundwasserstand_neu.Rdata"),
+    if (mentor) file.path(g, "mentor_grundwasserstand_neu.Rdata"),
     file.path(o, "MV/Lieferung2/test/20210510_MV_Verkn\u00fcpfungsfelder.xlsx"),
     file.path(g, "info_mentor/Stammdaten_mv.xlsx"),
     file.path(cfg$dir_dbstamm, "MV_Stammdaten_neu.csv"),
@@ -382,7 +441,8 @@ state_level_input_info <- function(cfg) {
     file.path(o, "BW/Stammdaten_FARM_LUBW_211209.xlsx"), file.path(o, "BW/Grundwasserstand-Daten_FARM_LUBW_211221.xlsx"),
     file.path(o, "BW/G\u00fcte-Daten_FARM_LUBW_211215.xlsx"),
     file.path(o, "BY/Gru_BGR_Prof_Broda/BIS_Daten_BGR_Prof_Broda/bde_export_bg_15062021_142744.xlsx"),
-    file.path(g, "info_mentor/Stammdaten_BY.xlsx"), file.path(g, "neuer_Abgleich_Mentor/nachlieferung_BY_mentor_stamm.RData"),
+    file.path(g, "info_mentor/Stammdaten_BY.xlsx"),
+    if (mentor) file.path(g, "neuer_Abgleich_Mentor/nachlieferung_BY_mentor_stamm.RData"),
     file.path(o, "HE/Berthold_W4_2021-04-16_083539/Berthold_W4/BGR_Anfrage_202103_gesamt.xlsx"),
     file.path(g, "info_mentor/Stammdaten_HE.xlsx"),
     file.path(o, "RP/RP_GW_Messst_PSM_nrM_Werte.xlsx"),
@@ -398,22 +458,29 @@ state_level_input_info <- function(cfg) {
 # measurement date), wells delivered by the state and by MENTOR with the
 # state data only. `inputs` (state_level_input_info()) only reruns the step
 # when the files change. A state whose files cannot be read is left out with
-# a warning. Returns list(levels, log): log has one row per state (and
-# MENTOR) with the rows and wells read, or the error.
-build_state_levels <- function(cfg, inputs = NULL) {
+# a warning. MENTOR level rows only with cfg$use_mentor (the MENTOR data
+# are also in gw_base). `keep`: keys ("state ID", state_id_key()) of the
+# FARM wells; only rows of these wells are kept (by messstellen_id or
+# id_alt), so the table stays small (NW delivers all wells of the state).
+# Returns list(levels, log): log has one row per state (and MENTOR) with the
+# rows read and kept, the wells kept, notes (e.g. a cut-off Excel export),
+# or the error.
+build_state_levels <- function(cfg, inputs = NULL, keep = NULL) {
   template <- tibble::tibble(
     state = character(), source = character(), messstellen_id = character(), id_alt = character(),
     datum = as.Date(character()), gwl_m_nhn = numeric(), gok_m_nhn = numeric(), gok_source = character(),
     depth_m = numeric(), depth_ref = character(), aggregation = character(), n_period = integer(),
     gwl_min_period = numeric(), gwl_max_period = numeric(), unit = character(), note = character()
   )
-  log_row <- function(part, status, rows = 0L, wells = 0L, error = NA_character_) {
-    tibble::tibble(part = part, status = status, rows = rows, wells = wells, error = error)
+  log_row <- function(part, status, rows = 0L, rows_kept = 0L, wells_kept = 0L,
+                      note = NA_character_, error = NA_character_) {
+    tibble::tibble(part = part, status = status, rows = rows, rows_kept = rows_kept,
+                   wells_kept = wells_kept, note = note, error = error)
   }
   mentor_file <- file.path(cfg$dir_gwst, "mentor_grundwasserstand_neu.Rdata")
   mentor_empty <- tibble::tibble(bl = character(), messstellen_id = character(),
                                  datum = as.Date(character()), nn_messwert = numeric())
-  mentor <- tryCatch({
+  mentor <- if (!isTRUE(cfg$use_mentor)) NULL else tryCatch({
     m <- tibble::as_tibble(sl_load_one(mentor_file))
     need <- c("bl", "messstellen_id", "datum", "nn_messwert")
     if (!all(need %in% names(m))) {
@@ -422,8 +489,10 @@ build_state_levels <- function(cfg, inputs = NULL) {
     }
     m
   }, error = function(e) structure(mentor_empty, error = conditionMessage(e)))
-  log <- if (is.null(attr(mentor, "error"))) {
-    log_row("MENTOR", "read", nrow(mentor), length(unique(mentor$messstellen_id)))
+  log <- if (is.null(mentor)) {
+    log_row("MENTOR", "not used (use_mentor = FALSE)")
+  } else if (is.null(attr(mentor, "error"))) {
+    log_row("MENTOR", "read", nrow(mentor), nrow(mentor), length(unique(mentor$messstellen_id)))
   } else {
     warning("State levels: MENTOR file not used (", attr(mentor, "error"), "); only state deliveries.",
             call. = FALSE)
@@ -433,17 +502,31 @@ build_state_levels <- function(cfg, inputs = NULL) {
   parts <- list()
   for (st in states) {
     message("State levels: reading ", st, " ...")
-    part <- tryCatch(
-      dplyr::mutate(state_level_readers[[st]](cfg, mentor), state = st),
-      error = function(e) structure(list(), error = conditionMessage(e))
+    notes <- character(0)
+    part <- withCallingHandlers(
+      tryCatch(
+        dplyr::mutate(state_level_readers[[st]](cfg, mentor), state = st),
+        error = function(e) structure(list(), error = conditionMessage(e))
+      ),
+      warning = function(w) {
+        notes <<- c(notes, conditionMessage(w))
+        invokeRestart("muffleWarning")
+      }
     )
+    note <- if (length(notes) > 0) paste(unique(notes), collapse = " | ") else NA_character_
     if (!is.null(attr(part, "error"))) {
       warning("State levels: ", st, " not read: ", attr(part, "error"), call. = FALSE)
-      log <- dplyr::bind_rows(log, log_row(st, "failed", error = attr(part, "error")))
-    } else {
-      parts[[st]] <- part
-      log <- dplyr::bind_rows(log, log_row(st, "read", nrow(part), length(unique(part$messstellen_id))))
+      log <- dplyr::bind_rows(log, log_row(st, "failed", note = note, error = attr(part, "error")))
+      next
     }
+    n_read <- nrow(part)
+    if (!is.null(keep)) {
+      id_alt <- if ("id_alt" %in% names(part)) part$id_alt else NA_character_
+      part <- part[state_id_key(st, part$messstellen_id) %in% keep | state_id_key(st, id_alt) %in% keep, ]
+    }
+    if (!is.na(note)) warning("State levels: ", st, ": ", note, call. = FALSE)
+    parts[[st]] <- part
+    log <- dplyr::bind_rows(log, log_row(st, "read", n_read, nrow(part), length(unique(part$messstellen_id)), note))
   }
   raw <- dplyr::bind_rows(c(list(template), unname(parts)))
   raw <- raw[names(template)]

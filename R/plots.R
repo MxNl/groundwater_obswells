@@ -1023,7 +1023,7 @@ method_steps <- function(spec, coverage, neighbour_radius_m = 10) {
       paste0("Where the ground elevation is still missing: measuring point height minus the median ",
              "stick-up of the state's FARM wells."),
     "Wells", "Groundwater levels from three sources",
-      paste0("In this order: the state series (state deliveries and MENTOR), the linked gw_base ",
+      paste0("In this order: the state series (state deliveries), the linked gw_base ",
              "well, the nearest gw_base well with levels within ", m(neighbour_radius_m), " m."),
     "Each measurement", "Complete records",
       "Keep measurements with well ID and date; an empty level counts as missing.",

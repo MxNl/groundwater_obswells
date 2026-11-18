@@ -2,7 +2,7 @@
 #
 # For every FARM well the level series is taken from the first source with
 # data:
-#   1. the state level series (state deliveries and MENTOR, built in the
+#   1. the state level series (state deliveries, built in the
 #      pipeline, R/state_levels.R), linked by state and ID with the ID
 #      columns of the mapping table (source "state_levels");
 #   2. the linked gw_base well (tbl_gwl_raw);

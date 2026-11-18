@@ -118,28 +118,41 @@ list(
   ),
 
   # Levels of the analysis wells: three sources by priority ------------------------
-  # 1. the state level series (state deliveries and MENTOR), read from the
+  # 1. the state level series (state deliveries), read from the
   #    delivery folders (R/state_levels.R); 2. the linked gw_base well; 3. the
   #    nearest gw_base well with levels within neighbour_radius_m.
   tar_target(level_config, list(neighbour_radius_m = 10)),
   # folders of the deliveries and the states read; a state whose files
-  # cannot be read is left out with a warning
+  # cannot be read is left out with a warning. use_mentor: also the MENTOR
+  # level rows (not needed: MENTOR is also in gw_base; the MENTOR master
+  # data tables for ground elevations and IDs are read either way)
   tar_target(
     state_levels_config,
     list(
       dir_orig = "//Bgr.local/GZH/daten/b2/B22-Farm/PROJEKTE/FARM/Daten/Originaldaten_Laender",
       dir_gwst = "//Bgr.local/GZH/daten/b2/B22-Farm/PROJEKTE/FARM/Daten/Datenanalyse/Grundwasserstaende",
       dir_dbstamm = "//Bgr.local/GZH/daten/b2/B22-Farm/PROJEKTE/FARM/Daten/Datenbank_Laender/Stammdaten",
-      states = c("MV", "SH", "BB", "BW", "BY", "HE", "RP", "NI", "NW")
+      states = c("MV", "SH", "BB", "BW", "BY", "HE", "RP", "NI", "NW"),
+      use_mentor = FALSE
     )
+  ),
+  # keys of the FARM wells for the state series (from the FARM table and the
+  # mapping only, so changes in gw_base do not reread the deliveries): only
+  # their rows are kept
+  tar_target(
+    state_levels_keep,
+    unique(stats::na.omit(farm_link_keys(farm_meta, id_mapping, "state_levels")$key))
   ),
   # size and time of every input file, on every run: changed or new
   # deliveries rebuild the state series
   tar_target(state_levels_inputs, state_level_input_info(state_levels_config), cue = tar_cue(mode = "always")),
-  # one row per well and date (state data before MENTOR); also
-  # output/state_levels_wells.csv (one row per well) and
-  # output/state_levels_log.csv (per state: rows read, or the error)
-  tar_target(state_levels_build, build_state_levels(state_levels_config, state_levels_inputs)),
+  # one row per FARM well and date; also output/state_levels_wells.csv (one
+  # row per well) and output/state_levels_log.csv (per state: rows read and
+  # kept, notes such as a cut-off Excel export, or the error)
+  tar_target(
+    state_levels_build,
+    build_state_levels(state_levels_config, state_levels_inputs, state_levels_keep)
+  ),
   tar_target(state_levels_raw, state_levels_build$levels),
   tar_target(
     state_levels_log_csv,
@@ -244,7 +257,7 @@ list(
       distribution_max_m = 16,     # x axis of the distributions, m below ground
       caption = paste(
         "Data: FARM master data, filled from gw_base (tbl_meta_well_import);",
-        "groundwater levels: state deliveries and MENTOR, gw_base (tbl_gwl_raw).",
+        "groundwater levels: state deliveries, gw_base (tbl_gwl_raw).",
         "Borders: Natural Earth."
       )
     )

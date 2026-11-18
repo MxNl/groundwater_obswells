@@ -1,6 +1,6 @@
 # 21. The state level series are read in the pipeline
 
-- Status: accepted (supersedes ADR 19)
+- Status: accepted (supersedes ADR 19); amended by ADR 22
 - Date: 2026-11-18
 - Code: `R/state_levels.R` (`build_state_levels()`, `state_level_readers`,
   `state_level_input_info()`, `summarise_state_level_wells()`),

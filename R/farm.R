@@ -321,7 +321,7 @@ plot_farm_filling <- function(meta, plot_config, font = setup_plot_font(plot_con
         colour_word(if (is.na(neighbour)) "gw_base well nearby" else neighbour, "#B5446E"),
         ", or ", colour_word("none", "#A6A6A6"), ", in this order of priority."
       ),
-      caption = "Data: FARM master data, gw_base (tbl_meta_well_import, tbl_gwl_raw), state deliveries and MENTOR.",
+      caption = "Data: FARM master data, gw_base (tbl_meta_well_import, tbl_gwl_raw), state deliveries.",
       theme = theme_maps(font)
     )
   png <- save_figure(
