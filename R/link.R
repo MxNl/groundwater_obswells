@@ -138,7 +138,7 @@ state_from_id <- function(x) {
 # The key that links the wells of all sources: state and normalised ID
 state_id_key <- function(state, id) {
   id <- norm_id(id)
-  ifelse(is.na(id), NA_character_, paste(state, id))
+  as.character(ifelse(is.na(id), NA_character_, paste(state, id)))
 }
 
 # Coordinates in EPSG 25832, from x/y in the EPSG code `epsg` per row. EPSG

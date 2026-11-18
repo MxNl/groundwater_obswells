@@ -24,7 +24,10 @@ be built where they are used, without a manual step.
   every run (`state_levels_inputs`), so changed or added deliveries rebuild
   the series, and only then.
 - A state whose files cannot be read is left out with a warning; the other
-  states are used. Without the MENTOR file, only state deliveries are used.
+  states are used. Without the MENTOR file (or with other columns than bl,
+  messstellen_id, datum, nn_messwert), only state deliveries are used.
+  `output/state_levels_log.csv` lists per state the rows read or the error.
+  Without any state series the pipeline continues with gw_base levels.
 - The script's per-well overview is written as
   `output/state_levels_wells.csv`; its file outputs are not.
 

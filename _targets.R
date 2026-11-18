@@ -137,8 +137,15 @@ list(
   # deliveries rebuild the state series
   tar_target(state_levels_inputs, state_level_input_info(state_levels_config), cue = tar_cue(mode = "always")),
   # one row per well and date (state data before MENTOR); also
-  # output/state_levels_wells.csv (one row per well)
-  tar_target(state_levels_raw, build_state_levels(state_levels_config, state_levels_inputs)),
+  # output/state_levels_wells.csv (one row per well) and
+  # output/state_levels_log.csv (per state: rows read, or the error)
+  tar_target(state_levels_build, build_state_levels(state_levels_config, state_levels_inputs)),
+  tar_target(state_levels_raw, state_levels_build$levels),
+  tar_target(
+    state_levels_log_csv,
+    write_csv_file(state_levels_build$log, "output/state_levels_log.csv"),
+    format = "file"
+  ),
   tar_target(
     state_levels_wells_csv,
     write_csv_file(summarise_state_level_wells(state_levels_raw), "output/state_levels_wells.csv"),

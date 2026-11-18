@@ -142,7 +142,8 @@ least one level inside `gwl_valid_range`):
    Size and time of every input file are checked on every run, so changed
    deliveries rebuild the series; a state whose files cannot be read is left
    out with a warning (no reader yet: SL, ST, SN, TH).
-   `output/state_levels_wells.csv` lists the wells of the series. Levels in
+   `output/state_levels_wells.csv` lists the wells of the series,
+   `output/state_levels_log.csv` per state the rows read or the error. Levels in
    m a.s.l.; where only a depth was delivered, the level is ground elevation
    minus depth (below ground) or measuring point minus depth (below the
    measuring point, RP and the BW Abstich);

@@ -27,7 +27,7 @@ prepare_state_levels <- function(d, mapping) {
     if (length(rows) > 0 && col %in% names(d)) ids[rows] <- as.character(d[[col]][rows])
   }
   tibble::tibble(
-    key = state_id_key(state, ids),
+    key = as.character(state_id_key(state, ids)),
     obs_date = as.Date(d$datum),
     gwl = as.numeric(d$gwl_m_nhn),
     depth = as.numeric(d$depth_m),

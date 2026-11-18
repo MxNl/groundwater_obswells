@@ -54,6 +54,7 @@ sl_col <- function(d, name) {
 
 # the one object of an .RData file
 sl_load_one <- function(file) {
+  if (!file.exists(file)) stop("file not found: ", file, call. = FALSE)
   env <- new.env()
   get(load(file, envir = env)[1], envir = env)
 }
@@ -397,7 +398,8 @@ state_level_input_info <- function(cfg) {
 # measurement date), wells delivered by the state and by MENTOR with the
 # state data only. `inputs` (state_level_input_info()) only reruns the step
 # when the files change. A state whose files cannot be read is left out with
-# a warning.
+# a warning. Returns list(levels, log): log has one row per state (and
+# MENTOR) with the rows and wells read, or the error.
 build_state_levels <- function(cfg, inputs = NULL) {
   template <- tibble::tibble(
     state = character(), source = character(), messstellen_id = character(), id_alt = character(),
@@ -405,25 +407,45 @@ build_state_levels <- function(cfg, inputs = NULL) {
     depth_m = numeric(), depth_ref = character(), aggregation = character(), n_period = integer(),
     gwl_min_period = numeric(), gwl_max_period = numeric(), unit = character(), note = character()
   )
+  log_row <- function(part, status, rows = 0L, wells = 0L, error = NA_character_) {
+    tibble::tibble(part = part, status = status, rows = rows, wells = wells, error = error)
+  }
   mentor_file <- file.path(cfg$dir_gwst, "mentor_grundwasserstand_neu.Rdata")
-  mentor <- tryCatch(tibble::as_tibble(sl_load_one(mentor_file)), error = function(e) {
-    warning("State levels: MENTOR file not read (", conditionMessage(e), "); only state deliveries used.",
+  mentor_empty <- tibble::tibble(bl = character(), messstellen_id = character(),
+                                 datum = as.Date(character()), nn_messwert = numeric())
+  mentor <- tryCatch({
+    m <- tibble::as_tibble(sl_load_one(mentor_file))
+    need <- c("bl", "messstellen_id", "datum", "nn_messwert")
+    if (!all(need %in% names(m))) {
+      stop("columns ", paste(setdiff(need, names(m)), collapse = ", "), " missing; it has: ",
+           paste(names(m), collapse = ", "))
+    }
+    m
+  }, error = function(e) structure(mentor_empty, error = conditionMessage(e)))
+  log <- if (is.null(attr(mentor, "error"))) {
+    log_row("MENTOR", "read", nrow(mentor), length(unique(mentor$messstellen_id)))
+  } else {
+    warning("State levels: MENTOR file not used (", attr(mentor, "error"), "); only state deliveries.",
             call. = FALSE)
-    tibble::tibble(bl = character(), messstellen_id = character(), datum = as.Date(character()),
-                   nn_messwert = numeric())
-  })
+    log_row("MENTOR", "failed", error = attr(mentor, "error"))
+  }
   states <- intersect(cfg$states %||% names(state_level_readers), names(state_level_readers))
-  parts <- lapply(states, function(st) {
+  parts <- list()
+  for (st in states) {
     message("State levels: reading ", st, " ...")
-    tryCatch(
+    part <- tryCatch(
       dplyr::mutate(state_level_readers[[st]](cfg, mentor), state = st),
-      error = function(e) {
-        warning("State levels: ", st, " not read: ", conditionMessage(e), call. = FALSE)
-        NULL
-      }
+      error = function(e) structure(list(), error = conditionMessage(e))
     )
-  })
-  raw <- dplyr::bind_rows(template, parts)
+    if (!is.null(attr(part, "error"))) {
+      warning("State levels: ", st, " not read: ", attr(part, "error"), call. = FALSE)
+      log <- dplyr::bind_rows(log, log_row(st, "failed", error = attr(part, "error")))
+    } else {
+      parts[[st]] <- part
+      log <- dplyr::bind_rows(log, log_row(st, "read", nrow(part), length(unique(part$messstellen_id))))
+    }
+  }
+  raw <- dplyr::bind_rows(c(list(template), unname(parts)))
   raw <- raw[names(template)]
   all <- raw |>
     dplyr::mutate(
@@ -439,11 +461,12 @@ build_state_levels <- function(cfg, inputs = NULL) {
     dplyr::filter(!is.na(messstellen_id), !is.na(datum)) |>
     dplyr::distinct()
   # wells delivered by the state and by MENTOR: the state data only
-  all |>
+  levels <- all |>
     dplyr::mutate(from_mentor = startsWith(source, "mentor")) |>
     dplyr::filter(!(from_mentor & any(!from_mentor)), .by = c(state, messstellen_id)) |>
     dplyr::select(-from_mentor) |>
     dplyr::arrange(state, messstellen_id, source, datum)
+  list(levels = levels, log = log)
 }
 
 # Wells of the state series, as in the script's overview: per well the
