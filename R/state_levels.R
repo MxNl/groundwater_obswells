@@ -473,6 +473,15 @@ build_state_levels <- function(cfg, inputs = NULL) {
 # sources, period, number of values, ground elevation and its source, mean
 # level and depth (output/state_levels_wells.csv).
 summarise_state_level_wells <- function(levels) {
+  # no state read: an empty table (min() would warn on zero values)
+  if (nrow(levels) == 0) {
+    return(tibble::tibble(
+      state = character(), messstellen_id = character(), sources = character(),
+      aggregation = character(), depth_ref = character(), gok_m_nhn = numeric(),
+      gok_source = character(), start = as.Date(character()), end = as.Date(character()),
+      n_points = integer(), gwl_mean = numeric(), depth_mean = numeric(), n_above_ground = integer()
+    ))
+  }
   levels |>
     dplyr::summarise(
       sources = paste(sort(unique(source)), collapse = ", "),
