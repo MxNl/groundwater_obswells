@@ -127,9 +127,9 @@ list(
   tar_target(
     state_levels_config,
     list(
-      dir_orig = "J:/PROJEKTE/FARM/Daten/Originaldaten_Laender",
-      dir_gwst = "J:/PROJEKTE/FARM/Daten/Datenanalyse/Grundwasserstaende",
-      dir_dbstamm = "J:/PROJEKTE/FARM/Daten/Datenbank_Laender/Stammdaten",
+      dir_orig = "//Bgr.local/GZH/daten/b2/B22-Farm/PROJEKTE/FARM/Daten/Originaldaten_Laender",
+      dir_gwst = "//Bgr.local/GZH/daten/b2/B22-Farm/PROJEKTE/FARM/Daten/Datenanalyse/Grundwasserstaende",
+      dir_dbstamm = "//Bgr.local/GZH/daten/b2/B22-Farm/PROJEKTE/FARM/Daten/Datenbank_Laender/Stammdaten",
       states = c("MV", "SH", "BB", "BW", "BY", "HE", "RP", "NI", "NW")
     )
   ),
