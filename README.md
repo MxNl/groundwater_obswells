@@ -146,7 +146,7 @@ least one level inside `gwl_valid_range`):
    if not valid, as Windows-1252. A state whose files cannot be read is left
    out with a warning (no reader yet: SL, ST, SN, TH).
    `output/state_levels_log.csv` lists per state the rows read and kept, the
-   wells kept, notes (e.g. an Excel export at the row limit of a sheet,
+   wells kept, example IDs as read (to see why wells do not link), notes (e.g. an Excel export at the row limit of a sheet,
    probably cut off) or the error; `output/state_levels_wells.csv` the wells
    of the series. Levels in m a.s.l.; where only a depth was delivered, the
    level is ground elevation minus depth (below ground) or measuring point

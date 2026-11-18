@@ -109,7 +109,9 @@ sl_read_text <- function(path, delim, reader = readr::read_delim, ...) {
 # An Excel sheet; a note (warning) if it reaches the row limit of Excel
 # (1,048,576 rows): the export is then probably cut off.
 sl_read_excel <- function(path, ...) {
-  d <- readxl::read_excel(path, ...)
+  # column types guessed from all rows (remark columns are empty for long
+  # stretches and would otherwise be guessed as logical)
+  d <- readxl::read_excel(path, guess_max = 1048576, ...)
   if (nrow(d) >= 1048570) {
     warning(basename(path), ": ", nrow(d), " rows, the row limit of an Excel sheet; ",
             "the export is probably cut off.", call. = FALSE)
@@ -450,7 +452,8 @@ state_level_input_info <- function(cfg) {
               "WSP_Monatsmittelwerte_2010_2020_Gruppe_aus_Taberst_NI_FARM-Stammdaten_xlsx.csv"),
     file.path(o, "NRW/wasserstand/opendata.gw_wasserstand.csv")
   )
-  info <- file.info(files)
+  # no owner lookup (fails on network shares with a warning per file)
+  info <- file.info(files, extra_cols = FALSE)
   tibble::tibble(file = files, exists = file.exists(files), size = info$size, modified = as.character(info$mtime))
 }
 
@@ -473,9 +476,9 @@ build_state_levels <- function(cfg, inputs = NULL, keep = NULL) {
     gwl_min_period = numeric(), gwl_max_period = numeric(), unit = character(), note = character()
   )
   log_row <- function(part, status, rows = 0L, rows_kept = 0L, wells_kept = 0L,
-                      note = NA_character_, error = NA_character_) {
+                      ids_example = NA_character_, note = NA_character_, error = NA_character_) {
     tibble::tibble(part = part, status = status, rows = rows, rows_kept = rows_kept,
-                   wells_kept = wells_kept, note = note, error = error)
+                   wells_kept = wells_kept, ids_example = ids_example, note = note, error = error)
   }
   mentor_file <- file.path(cfg$dir_gwst, "mentor_grundwasserstand_neu.Rdata")
   mentor_empty <- tibble::tibble(bl = character(), messstellen_id = character(),
@@ -520,13 +523,18 @@ build_state_levels <- function(cfg, inputs = NULL, keep = NULL) {
       next
     }
     n_read <- nrow(part)
+    # a few IDs as read (and id_alt), to see why wells do not link to FARM
+    ids <- utils::head(unique(stats::na.omit(part$messstellen_id)), 5)
+    alt <- if ("id_alt" %in% names(part)) utils::head(unique(stats::na.omit(part$id_alt)), 3) else character(0)
+    ids_example <- paste(c(ids, if (length(alt) > 0) paste0("id_alt: ", paste(alt, collapse = ", "))), collapse = ", ")
     if (!is.null(keep)) {
       id_alt <- if ("id_alt" %in% names(part)) part$id_alt else NA_character_
       part <- part[state_id_key(st, part$messstellen_id) %in% keep | state_id_key(st, id_alt) %in% keep, ]
     }
     if (!is.na(note)) warning("State levels: ", st, ": ", note, call. = FALSE)
     parts[[st]] <- part
-    log <- dplyr::bind_rows(log, log_row(st, "read", n_read, nrow(part), length(unique(part$messstellen_id)), note))
+    log <- dplyr::bind_rows(log, log_row(st, "read", n_read, nrow(part), length(unique(part$messstellen_id)),
+                                         ids_example, note))
   }
   raw <- dplyr::bind_rows(c(list(template), unname(parts)))
   raw <- raw[names(template)]
