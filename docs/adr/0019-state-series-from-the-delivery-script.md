@@ -1,6 +1,6 @@
 # 19. The state level series come from a separate script
 
-- Status: accepted
+- Status: superseded by ADR 21
 - Date: 2026-11-18
 - Code: `scripts/gw_timeseries_all_states.R`, `R/levels.R`
   (`state_levels_file_info()`, `read_state_levels()`); settings

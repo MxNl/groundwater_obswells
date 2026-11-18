@@ -24,7 +24,10 @@ flowchart LR
   classDef out fill:#d1fae5,stroke:#86d9b9,stroke-width:1px,color:#064e3b
 
   db[("SQL Server via ODBC: catalogue, D3, D4")]:::data
-  files[("Files: D1 FARM, D2 mapping, D5 state series")]:::data
+  files[("Files: D1 FARM, D2 mapping")]:::data
+  dl[("Delivery folders of the states")]:::data
+  stl("State series: read when the files change"):::step
+  inp{{"Size and time of the delivery files, checked every run"}}:::rule
   cfg[("Settings in _targets.R")]:::data
 
   cat("Catalogue and metadata checksum, every run"):::step
@@ -42,7 +45,7 @@ flowchart LR
   files --> meta
   meta --> src
   db --> src
-  files --> src
+  dl --> inp --> stl --> src
   src --> q
   src --> loc
   ref --> q

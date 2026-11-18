@@ -25,7 +25,7 @@ and to where it comes from.
 | D2 | ID mapping per source and state (`config/id_mapping.csv`) | project table (ADR 17) |
 | D3 | gw_base metadata (`tbl_meta_well_import`) | source data (ADR 1) |
 | D4 | gw_base levels (`tbl_gwl_raw`) | source data (ADR 3) |
-| D5 | State level series: state deliveries and MENTOR (`gwl_preferred`) | built by `scripts/gw_timeseries_all_states.R` (ADR 19) |
+| D5 | State level series: state deliveries and MENTOR (`state_levels_raw`) | built in the pipeline from the delivery folders (ADR 21) |
 | D6 | Analysis table `well_meta`, with the origin of every value | created in chart 1 from D1–D3 (ADR 1, 17, 20) |
 | D7 | Level source of every well, `level_sources` | created in chart 1 from D3–D6 (ADR 18) |
 | D8 | Monthly means under the well's own ID, `gwl_monthly` | created in chart 2 from D4, D5, D7 (ADR 3, 18) |

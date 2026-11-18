@@ -14,7 +14,7 @@ Server database.
    install.packages(c(
      "targets", "odbc", "pool", "duckdb", "DBI", "dplyr", "tibble", "tidyr", "keyring",
      "sf", "ggplot2", "ggridges", "patchwork", "marquee", "scales", "ragg",
-     "systemfonts", "rnaturalearthdata", "withr", "readxl"
+     "systemfonts", "rnaturalearthdata", "withr", "readxl", "readr", "foreign"
    ))
    ```
 
@@ -136,13 +136,16 @@ well not linked to gw_base).
 Each FARM well takes its level series from the first source with data (at
 least one level inside `gwl_valid_range`):
 
-1. the state level series: state deliveries and MENTOR, built by
-   `scripts/gw_timeseries_all_states.R` (run it when deliveries change; the
-   pipeline reads its .RData at `level_config$state_levels_file` and reruns
-   when the file changes; without the file only gw_base is used, with a
-   warning). Levels in m a.s.l.; where only a depth was delivered, the level
-   is ground elevation minus depth (below ground) or measuring point minus
-   depth (below the measuring point, RP and the BW Abstich);
+1. the state level series: state deliveries and MENTOR, read by the
+   pipeline from the delivery folders (`state_levels_config`;
+   `R/state_levels.R`, formerly the script `gw_timeseries_all_states.R`).
+   Size and time of every input file are checked on every run, so changed
+   deliveries rebuild the series; a state whose files cannot be read is left
+   out with a warning (no reader yet: SL, ST, SN, TH).
+   `output/state_levels_wells.csv` lists the wells of the series. Levels in
+   m a.s.l.; where only a depth was delivered, the level is ground elevation
+   minus depth (below ground) or measuring point minus depth (below the
+   measuring point, RP and the BW Abstich);
 2. the linked gw_base well (`tbl_gwl_raw`);
 3. the nearest gw_base well with levels within `neighbour_radius_m` (10 m)
    of the well's coordinates.
@@ -292,8 +295,8 @@ columns used. The queries rerun when:
 - rows are added or deleted (row counts),
 - values in the gw_base metadata change (checksum over well ID, ground
   elevation, screen depths and coordinates): the metadata query reruns,
-- the FARM file, the ID mapping or the file of the state level series
-  changes (time and size of the state file are checked on every run),
+- the FARM file, the ID mapping or a file of the state deliveries changes
+  (size and time of the delivery files are checked on every run),
 - the analysis wells or their (filled) ground elevations change: the level
   queries rerun, as they read only these wells and check the depth below
   ground,

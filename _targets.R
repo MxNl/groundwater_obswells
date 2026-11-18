@@ -118,25 +118,33 @@ list(
   ),
 
   # Levels of the analysis wells: three sources by priority ------------------------
-  # 1. the state level series (state deliveries and MENTOR), built by
-  #    scripts/gw_timeseries_all_states.R; its .RData output at
-  #    state_levels_file; 2. the linked gw_base well; 3. the nearest gw_base
-  #    well with levels within neighbour_radius_m.
+  # 1. the state level series (state deliveries and MENTOR), read from the
+  #    delivery folders (R/state_levels.R); 2. the linked gw_base well; 3. the
+  #    nearest gw_base well with levels within neighbour_radius_m.
+  tar_target(level_config, list(neighbour_radius_m = 10)),
+  # folders of the deliveries and the states read; a state whose files
+  # cannot be read is left out with a warning
   tar_target(
-    level_config,
+    state_levels_config,
     list(
-      # where the script writes it (dir_out); without the file only gw_base
-      # levels are used, with a warning
-      state_levels_file = "J:/PROJEKTE/FARM/Daten/Datenanalyse/Grundwasserstaende/final_output/gwl_timeseries_all_states.RData",
-      neighbour_radius_m = 10
+      dir_orig = "J:/PROJEKTE/FARM/Daten/Originaldaten_Laender",
+      dir_gwst = "J:/PROJEKTE/FARM/Daten/Datenanalyse/Grundwasserstaende",
+      dir_dbstamm = "J:/PROJEKTE/FARM/Daten/Datenbank_Laender/Stammdaten",
+      states = c("MV", "SH", "BB", "BW", "BY", "HE", "RP", "NI", "NW")
     )
   ),
+  # size and time of every input file, on every run: changed or new
+  # deliveries rebuild the state series
+  tar_target(state_levels_inputs, state_level_input_info(state_levels_config), cue = tar_cue(mode = "always")),
+  # one row per well and date (state data before MENTOR); also
+  # output/state_levels_wells.csv (one row per well)
+  tar_target(state_levels_raw, build_state_levels(state_levels_config, state_levels_inputs)),
   tar_target(
-    state_levels_info,
-    state_levels_file_info(level_config$state_levels_file),
-    cue = tar_cue(mode = "always")
+    state_levels_wells_csv,
+    write_csv_file(summarise_state_level_wells(state_levels_raw), "output/state_levels_wells.csv"),
+    format = "file"
   ),
-  tar_target(state_levels, read_state_levels(state_levels_info, id_mapping)),
+  tar_target(state_levels, prepare_state_levels(state_levels_raw, id_mapping)),
   tar_target(state_series, link_state_levels(state_levels, well_meta)),
   tar_target(level_counts_spec, level_count_spec(well_spec)),
   tar_target(gwbase_level_counts, fetch_gwbase_level_counts(level_counts_spec)),

@@ -2,9 +2,9 @@
 #
 # For every FARM well the level series is taken from the first source with
 # data:
-#   1. the state level series (state deliveries and MENTOR, built by
-#      scripts/gw_timeseries_all_states.R), linked by state and ID with the
-#      ID columns of the mapping table (source "state_levels");
+#   1. the state level series (state deliveries and MENTOR, built in the
+#      pipeline, R/state_levels.R), linked by state and ID with the ID
+#      columns of the mapping table (source "state_levels");
 #   2. the linked gw_base well (tbl_gwl_raw);
 #   3. the nearest gw_base well with levels within level_config$neighbour_radius_m
 #      of the well's coordinates.
@@ -13,32 +13,12 @@
 # elevation. The gw_base levels are checked and averaged per month on the
 # server (R/wells.R), the state series here with the same checks.
 
-# The state level file: path, whether it exists, time and size of the last
-# change. A target checked on every run, so a new file reruns the steps after
-# it.
-state_levels_file_info <- function(path) {
-  info <- file.info(path)
-  list(path = path, exists = file.exists(path), mtime = as.character(info$mtime), size = info$size)
-}
-
-# The state level series (object gwl_preferred of the script's .RData):
-# state, ID, date and level; where only a depth was delivered, the depth and
-# its reference (GOK: below ground; Messpunkt: below the measuring point).
-# key: "state ID" with the column of the mapping (source state_levels,
-# other_column: messstellen_id or id_alt). No file: no rows, with a warning.
-read_state_levels <- function(info, mapping) {
-  empty <- tibble::tibble(
-    key = character(), obs_date = as.Date(character()), gwl = numeric(),
-    depth = numeric(), depth_ref = character(), source = character()
-  )
-  if (!isTRUE(info$exists)) {
-    warning("State level series not found: ", info$path, " (only gw_base levels are used).", call. = FALSE)
-    return(empty)
-  }
-  env <- new.env()
-  objects <- load(info$path, envir = env)
-  name <- if ("gwl_preferred" %in% objects) "gwl_preferred" else objects[1]
-  d <- tibble::as_tibble(get(name, envir = env))
+# The state level series (build_state_levels(), R/state_levels.R) in the
+# form used here: key "state ID" with the column of the mapping (source
+# state_levels, other_column: messstellen_id or id_alt), date, level; where
+# only a depth was delivered, the depth and its reference (GOK: below
+# ground; Messpunkt: below the measuring point).
+prepare_state_levels <- function(d, mapping) {
   state <- norm_state(d$state)
   m <- id_mapping_for(mapping, "state_levels", state)
   ids <- rep(NA_character_, nrow(d))
@@ -46,16 +26,15 @@ read_state_levels <- function(info, mapping) {
     rows <- which(m$other_column %in% col & m$link == "id")
     if (length(rows) > 0 && col %in% names(d)) ids[rows] <- as.character(d[[col]][rows])
   }
-  col_or_na <- function(name, type = NA_character_) if (name %in% names(d)) d[[name]] else rep(type, nrow(d))
-  out <- tibble::tibble(
+  tibble::tibble(
     key = state_id_key(state, ids),
     obs_date = as.Date(d$datum),
-    gwl = as.numeric(col_or_na("gwl_m_nhn", NA_real_)),
-    depth = as.numeric(col_or_na("depth_m", NA_real_)),
-    depth_ref = as.character(col_or_na("depth_ref")),
-    source = as.character(col_or_na("source"))
-  )
-  dplyr::filter(out, !is.na(key), !is.na(obs_date))
+    gwl = as.numeric(d$gwl_m_nhn),
+    depth = as.numeric(d$depth_m),
+    depth_ref = as.character(d$depth_ref),
+    source = as.character(d$source)
+  ) |>
+    dplyr::filter(!is.na(key), !is.na(obs_date))
 }
 
 # The state series of the analysis wells: one row per well and measurement,

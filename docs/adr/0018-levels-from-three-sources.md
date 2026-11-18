@@ -19,7 +19,7 @@ directly, and some wells have a gw_base well with levels right next to them.
 Each FARM well takes its level series from the first source with data (at
 least one level inside `gwl_valid_range`):
 
-1. the state level series (state deliveries and MENTOR, ADR 19), linked by
+1. the state level series (state deliveries and MENTOR, ADR 21), linked by
    state and ID with the mapping (ADR 17);
 2. the linked gw_base well;
 3. the nearest gw_base well with levels within `neighbour_radius_m` (10 m)

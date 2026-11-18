@@ -4,7 +4,7 @@
 - Date: 2026-11-18
 - Code: `config/id_mapping.csv`, `R/farm.R` (`read_id_mapping()`,
   `id_mapping_for()`, `farm_link_keys()`, `fill_farm_meta()`),
-  `R/levels.R` (`read_state_levels()`), `R/wells.R` (`meta_query_spec()`)
+  `R/levels.R` (`prepare_state_levels()`), `R/wells.R` (`meta_query_spec()`)
 
 ## Context
 

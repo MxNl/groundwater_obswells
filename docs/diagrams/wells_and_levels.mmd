@@ -27,7 +27,10 @@ flowchart TB
   map[("D2 · ID mapping per source and state, config/id_mapping.csv")]:::data
   gwmeta[("D3 · gw_base metadata, tbl_meta_well_import")]:::data
   gwl[("D4 · gw_base levels, tbl_gwl_raw")]:::data
-  st[("D5 · State level series: state deliveries and MENTOR")]:::data
+  dl[("State deliveries and MENTOR: files per state")]:::data
+  stb("Read per state, ground elevation by priority, state data before MENTOR"):::step
+  st[("D5 · State level series")]:::data
+  dl --> stb --> st
 
   subgraph link ["Linking · ADR 2, 17"]
     direction TB
@@ -47,7 +50,7 @@ flowchart TB
   end
   meta[("D6 · Analysis table well_meta, with the origin of every value")]:::data
 
-  subgraph lev ["Level series by priority · ADR 18, 19"]
+  subgraph lev ["Level series by priority · ADR 18, 21"]
     direction TB
     p1("1 · State series of the well"):::step
     p2("2 · Series of the linked gw_base well"):::step
