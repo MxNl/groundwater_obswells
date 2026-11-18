@@ -50,14 +50,13 @@ flowchart TB
   end
   meta[("D6 · Analysis table well_meta, with the origin of every value")]:::data
 
-  subgraph lev ["Level series by priority · ADR 18, 21, 22"]
+  subgraph lev ["Level series by priority · ADR 18, 21–24"]
     direction TB
     p1("1 · State series of the well"):::step
     p2("2 · Series of the linked gw_base well"):::step
     p3("3 · Nearest gw_base well with levels within 10 m"):::step
-    has{{"Data: at least one level in the valid range"}}:::rule
-    p1 --> p2 --> p3
-    has -.- p1
+    has{{"The first usable over time (recent data, every season), else the first with data"}}:::rule
+    p1 --> p2 --> p3 --> has
   end
   srcs[("D7 · Level source of every well, level_sources")]:::data
   o1(["Where the values and the levels come from, per state"]):::out
@@ -73,7 +72,7 @@ flowchart TB
   st --> p1
   gwl --> p2
   gwmeta --> p3
-  p3 --> srcs
+  has --> srcs
   meta --> o1
   srcs --> o1
 

@@ -133,15 +133,20 @@ well not linked to gw_base).
 
 ### Groundwater levels: three sources by priority
 
-Each FARM well takes its level series from the first source with data (at
-least one level inside `gwl_valid_range`):
+Each FARM well has up to three candidate series, in this order of priority.
+Of these, it takes the first that is usable over time (data in the recent
+window and every season in at least `min_years_per_season` years); if none
+is, the first with at least one level inside `gwl_valid_range`. So an old or
+cut-off state series does not win over a gw_base series with recent data.
 
 1. the state level series: the state deliveries, read by the pipeline from
    the delivery folders (`state_levels_config`; `R/state_levels.R`). Size
    and time of every input file are checked on every run, so changed
    deliveries rebuild the series. MENTOR level data are not used
-   (`use_mentor = FALSE`; they are also in gw_base); the MENTOR master data
-   tables for ground elevations and IDs are read. Only the rows of wells that
+   (`use_mentor = FALSE`; they are also in gw_base), except the BY
+   "Nachlieferung" (`use_by_nachlieferung = TRUE`), the only level source of
+   most BY FARM wells; the MENTOR master data tables for ground elevations
+   and IDs are read. Only the rows of wells that
    can be linked to a FARM well are kept. Text files are read as UTF-8 or,
    if not valid, as Windows-1252. A state whose files cannot be read is left
    out with a warning (no reader yet: SL, ST, SN, TH).
@@ -155,7 +160,8 @@ least one level inside `gwl_valid_range`):
 3. the nearest gw_base well with levels within `neighbour_radius_m` (10 m)
    of the well's coordinates.
 
-`level_sources` (and the columns `level_source`, `level_id`,
+`level_sources` (and the columns `level_source`, `level_choice` (whether a
+series of higher priority was passed over), `level_id`,
 `level_distance_m` of `well_dtw`) tell which series a well uses. The levels
 count as the well's own: the depths use its own (filled) ground elevation,
 and the monthly means are stored under its `well_id` (`gwl_monthly`). The

@@ -133,7 +133,10 @@ list(
       dir_gwst = "//Bgr.local/GZH/daten/b2/B22-Farm/PROJEKTE/FARM/Daten/Datenanalyse/Grundwasserstaende",
       dir_dbstamm = "//Bgr.local/GZH/daten/b2/B22-Farm/PROJEKTE/FARM/Daten/Datenbank_Laender/Stammdaten",
       states = c("MV", "SH", "BB", "BW", "BY", "HE", "RP", "NI", "NW"),
-      use_mentor = FALSE
+      use_mentor = FALSE,
+      # the later MENTOR delivery of BY (keyed by LGD number, translated to
+      # the FARM ID): the only level source of most BY FARM wells
+      use_by_nachlieferung = TRUE
     )
   ),
   # keys of the FARM wells for the state series (from the FARM table and the
@@ -168,12 +171,31 @@ list(
   tar_target(state_series, link_state_levels(state_levels, well_meta)),
   tar_target(level_counts_spec, level_count_spec(well_spec)),
   tar_target(gwbase_level_counts, fetch_gwbase_level_counts(level_counts_spec)),
+  # every candidate series per well: state series, linked gw_base well,
+  # nearest other gw_base well within the radius
   tar_target(
-    level_sources,
-    assign_level_sources(
+    level_candidate_series,
+    level_candidates(
       well_meta, state_series, gwbase_level_counts, gwbase_meta, well_config$crs,
       level_config$neighbour_radius_m, well_config$gwl_valid_range
     )
+  ),
+  # only the settings the server queries use and the gw_base wells whose
+  # levels are read, with the (filled) ground elevation: a change of other
+  # settings (spikes, years per season, scenarios, plots) does not rerun them
+  tar_target(query_spec, server_query_spec(well_spec, well_elevations(well_meta, level_candidate_series))),
+  tar_target(gwl_monthly_gwbase, fetch_gwl_monthly(query_spec)),
+  tar_target(gwl_monthly_state, state_monthly(state_series, query_spec)),
+  # window statistics of every candidate; per well the first usable one
+  # over time (else the first with valid levels) is used
+  tar_target(
+    gwl_monthly_candidates,
+    candidate_monthly(gwl_monthly_gwbase, gwl_monthly_state, level_candidate_series)
+  ),
+  tar_target(gwl_stats_candidates, summarise_gwl_monthly(gwl_monthly_candidates, well_spec)),
+  tar_target(
+    level_sources,
+    choose_level_sources(well_meta, level_candidate_series, gwl_stats_candidates, well_spec)
   ),
   tar_target(well_meta_levels, add_level_sources(well_meta, level_sources)),
   tar_target(
@@ -181,12 +203,6 @@ list(
     plot_farm_filling(well_meta_levels, plot_config, plot_font),
     format = "file"
   ),
-  # only the settings the server queries use and the gw_base wells whose
-  # levels are read, with the (filled) ground elevation: a change of other
-  # settings (spikes, years per season, scenarios, plots) does not rerun them
-  tar_target(query_spec, server_query_spec(well_spec, well_elevations(well_meta, level_sources))),
-  tar_target(gwl_monthly_gwbase, fetch_gwl_monthly(query_spec)),
-  tar_target(gwl_monthly_state, state_monthly(state_series, query_spec)),
   # monthly means of every analysis well under its own well_id
   tar_target(gwl_monthly, combine_monthly(gwl_monthly_gwbase, gwl_monthly_state, level_sources)),
   tar_target(gwl_stats, summarise_gwl_monthly(gwl_monthly, well_spec)),

@@ -591,7 +591,7 @@ assess_well_dtw <- function(meta, gwl_stats, spec) {
     ) |>
     dplyr::select(
       well_id, farm_id, state, usable, in_meta, in_gw_base, in_gwl,
-      level_source, level_id, level_distance_m,
+      level_source, level_id, level_distance_m, level_choice,
       x, y, elev_gs, elev_mp, screen_top, screen_bot, screen_length,
       elev_gs_from, screen_top_from, screen_bot_from, coords_from,
       dtw_mean, dtw_mean_seasonal, dtw_shallowest, dtw_deepest, dtw_annual_low,

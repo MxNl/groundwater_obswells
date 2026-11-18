@@ -8,7 +8,9 @@
 #   2. the linked gw_base well (tbl_gwl_raw);
 #   3. the nearest gw_base well with levels within level_config$neighbour_radius_m
 #      of the well's coordinates.
-# "Data" means at least one level inside gwl_valid_range. The levels of the
+# Of these, the first that is usable over time is used (data in the recent
+# window, every season in enough years); if none is, the first with at
+# least one level inside gwl_valid_range (choose_level_sources()). The levels of the
 # chosen series count as the well's own: the depths use the well's own ground
 # elevation. The gw_base levels are checked and averaged per month on the
 # server (R/wells.R), the state series here with the same checks.
@@ -84,61 +86,105 @@ fetch_gwbase_level_counts <- function(spec) {
   db_query(gwbase_level_counts_sql(spec))
 }
 
-# The level series of every analysis well: level_source ("state data",
-# "gw_base", "gw_base well within <r> m", "none"), level_id (the gw_base
-# well whose levels are used; NA for state data and none) and
-# level_distance_m (distance to that well, for the neighbour).
-assign_level_sources <- function(meta, state_series, gw_counts, gwbase, crs = NULL,
-                                 radius_m = 10, valid_range = c(-Inf, Inf)) {
+# The candidate level series of every analysis well, in the order of
+# priority: 1 the state series (if it has at least one level inside
+# valid_range), 2 the linked gw_base well (if it has such levels), 3 the
+# nearest other gw_base well with such levels within radius_m. Columns
+# well_id, priority, level_source, level_id (gw_base well; NA for state
+# data), level_distance_m, cand_id (the series' ID in the candidate tables).
+level_candidates <- function(meta, state_series, gw_counts, gwbase, crs = NULL,
+                             radius_m = 10, valid_range = c(-Inf, Inf)) {
   wells <- dplyr::distinct(meta, well_id, .keep_all = TRUE)
   with_state <- state_series |>
     dplyr::filter(!is.na(gwl), gwl >= valid_range[1], gwl <= valid_range[2]) |>
     dplyr::distinct(well_id)
   gw_with_data <- gw_counts$well_id[gw_counts$n_valid > 0]
-  neighbour_label <- paste0("gw_base well within ", radius_m, " m")
-
-  out <- tibble::tibble(
-    well_id = wells$well_id,
-    level_source = dplyr::case_when(
-      wells$well_id %in% with_state$well_id ~ "state data",
-      wells$in_gw_base & wells$well_id %in% gw_with_data ~ "gw_base",
-      .default = NA_character_
-    ),
-    level_id = ifelse(level_source %in% "gw_base", wells$well_id, NA_character_),
-    level_distance_m = ifelse(level_source %in% "gw_base", 0, NA_real_)
-  )
-
-  # third option: the nearest gw_base well with levels within radius_m
-  todo <- which(is.na(out$level_source) & !is.na(wells$x) & !is.na(wells$y))
+  state <- tibble::tibble(well_id = intersect(wells$well_id, with_state$well_id), priority = 1L,
+                          level_source = "state data", level_id = NA_character_, level_distance_m = NA_real_)
+  own <- wells |>
+    dplyr::filter(in_gw_base, well_id %in% gw_with_data) |>
+    dplyr::transmute(well_id, priority = 2L, level_source = "gw_base", level_id = well_id, level_distance_m = 0)
+  # the nearest other gw_base well with levels within radius_m
+  near <- NULL
   xy <- coords_to_25832(gwbase$x, gwbase$y, crs %||% NA)
   cand <- tibble::tibble(well_id = gwbase$well_id, x = xy$x, y = xy$y) |>
     dplyr::filter(well_id %in% gw_with_data, !is.na(x), !is.na(y)) |>
     dplyr::distinct(well_id, .keep_all = TRUE)
-  if (length(todo) > 0 && nrow(cand) > 0) {
-    from <- sf::st_as_sf(wells[todo, c("x", "y")], coords = c("x", "y"), crs = 25832)
+  located <- which(!is.na(wells$x) & !is.na(wells$y))
+  if (length(located) > 0 && nrow(cand) > 0) {
+    from <- sf::st_as_sf(wells[located, c("x", "y")], coords = c("x", "y"), crs = 25832)
     to <- sf::st_as_sf(cand, coords = c("x", "y"), crs = 25832)
-    nearest <- sf::st_nearest_feature(from, to)
-    dist <- sqrt((wells$x[todo] - cand$x[nearest])^2 + (wells$y[todo] - cand$y[nearest])^2)
-    near <- dist <= radius_m
-    out$level_source[todo[near]] <- neighbour_label
-    out$level_id[todo[near]] <- cand$well_id[nearest[near]]
-    out$level_distance_m[todo[near]] <- dist[near]
+    hits <- sf::st_is_within_distance(from, to, dist = radius_m)
+    near <- dplyr::bind_rows(lapply(seq_along(located), function(k) {
+      h <- hits[[k]]
+      h <- h[cand$well_id[h] != wells$well_id[located[k]]]
+      if (length(h) == 0) return(NULL)
+      d <- sqrt((wells$x[located[k]] - cand$x[h])^2 + (wells$y[located[k]] - cand$y[h])^2)
+      tibble::tibble(well_id = wells$well_id[located[k]], level_id = cand$well_id[h[which.min(d)]],
+                     level_distance_m = min(d))
+    }))
+    if (nrow(near) > 0) {
+      near <- dplyr::mutate(near, priority = 3L, level_source = paste0("gw_base well within ", radius_m, " m"))
+    }
   }
-  out$level_source <- dplyr::coalesce(out$level_source, "none")
-  out
+  dplyr::bind_rows(state, own, near) |>
+    dplyr::mutate(cand_id = ifelse(level_source == "state data", paste0("state:", well_id), level_id)) |>
+    dplyr::arrange(well_id, priority)
 }
 
-# The gw_base wells whose levels are read on the server, with the ground
-# elevation of the analysis well they serve (for the depth check): one row
-# per gw_base well (the first analysis well where several share one).
-well_elevations <- function(meta, sources) {
-  sources |>
+# The gw_base wells whose levels are read on the server (all gw_base
+# candidates), with the ground elevation of the analysis well they serve
+# (for the depth check): one row per gw_base well (the first analysis well
+# where several share one).
+well_elevations <- function(meta, candidates) {
+  candidates |>
     dplyr::filter(!is.na(level_id)) |>
     dplyr::left_join(dplyr::distinct(meta, well_id, .keep_all = TRUE) |> dplyr::select(well_id, elev_gs),
                      by = "well_id") |>
     dplyr::distinct(level_id, .keep_all = TRUE) |>
     dplyr::transmute(well_id = level_id, elev_gs) |>
     dplyr::arrange(well_id)
+}
+
+# The monthly means of every candidate series under its cand_id (as
+# well_id, so the window statistics can be computed for all of them).
+candidate_monthly <- function(gwbase_monthly, state_monthly, candidates) {
+  st <- state_monthly |>
+    dplyr::filter(well_id %in% candidates$well_id[candidates$level_source == "state data"]) |>
+    dplyr::mutate(well_id = paste0("state:", well_id))
+  gw <- dplyr::filter(gwbase_monthly, well_id %in% candidates$cand_id)
+  dplyr::bind_rows(gw, st)
+}
+
+# The series used per well: of its candidates, the first in the order of
+# priority that is usable over time (data in the recent window and every
+# season in at least min_years_per_season years); if none is, the first
+# with valid levels; else none. level_choice says whether a series of
+# higher priority was passed over. Returns well_id, level_source, level_id,
+# level_distance_m, level_choice for every well of `meta`.
+choose_level_sources <- function(meta, candidates, stats, spec) {
+  scored <- candidates |>
+    dplyr::left_join(dplyr::select(stats, cand_id = well_id, n_obs_valid, n_months_recent, min_years_per_season),
+                     by = "cand_id") |>
+    dplyr::mutate(
+      valid = dplyr::coalesce(n_obs_valid, 0) > 0,
+      usable = valid & dplyr::coalesce(n_months_recent, 0) > 0 &
+        dplyr::coalesce(min_years_per_season, 0) >= spec$min_years_per_season
+    )
+  chosen <- scored |>
+    dplyr::filter(valid) |>
+    dplyr::arrange(well_id, dplyr::desc(usable), priority) |>
+    dplyr::mutate(first_priority = min(priority), .by = well_id) |>
+    dplyr::slice_head(n = 1, by = well_id) |>
+    dplyr::mutate(level_choice = dplyr::case_when(
+      priority == first_priority ~ "first source with data",
+      usable ~ "higher-priority series not usable over time",
+      .default = "first source with data"
+    ))
+  tibble::tibble(well_id = unique(meta$well_id)) |>
+    dplyr::left_join(dplyr::select(chosen, well_id, level_source, level_id, level_distance_m, level_choice),
+                     by = "well_id") |>
+    dplyr::mutate(level_source = dplyr::coalesce(level_source, "none"))
 }
 
 # The checks of single measurements (as on the server, checked_measurements_cte()):

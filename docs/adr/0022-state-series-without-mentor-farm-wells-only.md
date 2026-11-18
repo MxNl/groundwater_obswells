@@ -1,6 +1,6 @@
 # 22. State series without MENTOR levels, only for FARM wells
 
-- Status: accepted (amends ADR 21)
+- Status: accepted (amends ADR 21); BY Nachlieferung: ADR 24
 - Date: 2026-11-18
 - Code: `R/state_levels.R` (`build_state_levels()`, `sl_read_text()`,
   `sl_read_bb_file()`, `sl_read_excel()`); settings

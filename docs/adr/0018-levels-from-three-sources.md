@@ -1,6 +1,7 @@
 # 18. Groundwater levels from three sources by priority
 
-- Status: accepted (supersedes the levels part of ADR 1)
+- Status: accepted (supersedes the levels part of ADR 1); the choice
+  amended by ADR 23
 - Date: 2026-11-18
 - Code: `R/levels.R` (`assign_level_sources()`, `link_state_levels()`,
   `state_monthly()`, `combine_monthly()`, `combine_year_seasons()`,

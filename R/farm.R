@@ -218,7 +218,7 @@ estimate_elev_from_mp <- function(meta, min_pairs = 10) {
 
 # Where a value comes from (fields) and which series gives the levels
 # (levels): colours of the filling figure. The neighbour class is named
-# after the radius (assign_level_sources()).
+# after the radius (level_candidates()).
 farm_fill_colours <- function(sources = character(0)) {
   neighbour <- unique(grep("within", sources, value = TRUE))
   c(

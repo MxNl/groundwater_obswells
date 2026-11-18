@@ -161,12 +161,18 @@ sl_read_sh <- function(cfg, mentor) {
   stamm_l <- tibble::tibble(messstellen_id = sl_col(s_l, "Messtellen-ID"), gok = sl_col(s_l, "GOK [m NN]"))
   s_m <- readxl::read_excel(file.path(cfg$dir_gwst, "info_mentor/Stammdaten_SH.xlsx"))
   stamm_m <- tibble::tibble(messstellen_id = sl_col(s_m, "Nummer"), gok = sl_col(s_m, "Gel\u00e4ndeh\u00f6he"))
-  # columns by position: 2 = Messstellen_ID, 3 = date, 6 = level above sea level
-  w <- sl_read_text(file.path(cfg$dir_orig, "SH/GW/Grundwasserstaende_Messstellen_FARM_SH.txt"),
-                    delim = ";", col_types = readr::cols(.default = readr::col_character()))
+  # read without the header: the data rows start with a row number the
+  # header has no name for (Name; Messstellen_ID; Datum; Zeit; Abstich;
+  # Wasserstand ueber NHN; ...), so the ID is field 3, the date 4 and the
+  # level 7; where the rows have as many fields as the header, 2, 3 and 6
+  f_sh <- file.path(cfg$dir_orig, "SH/GW/Grundwasserstaende_Messstellen_FARM_SH.txt")
+  w <- sl_read_text(f_sh, delim = ";", col_names = FALSE, skip = 1,
+                    col_types = readr::cols(.default = readr::col_character()))
+  header <- strsplit(readLines(f_sh, n = 1, warn = FALSE), ";", fixed = TRUE, useBytes = TRUE)[[1]]
+  pos <- if (ncol(w) > length(header)) c(3, 4, 7) else c(2, 3, 6)
   laender <- tibble::tibble(
-    messstellen_id = sl_id(w[[2]]), datum = sl_date(w[[3]], "%d.%m.%Y"), gwl_m_nhn = sl_num_de(w[[6]]),
-    source = "laender"
+    messstellen_id = sl_id(w[[pos[1]]]), datum = sl_date(w[[pos[2]]], "%d.%m.%Y"),
+    gwl_m_nhn = sl_num_de(w[[pos[3]]]), source = "laender"
   ) |>
     dplyr::left_join(sl_gok_by_priority(list(laender_stamm = stamm_l, mentor_stamm = stamm_m)), by = "messstellen_id")
   mentor_sh <- sl_mentor(mentor, "SH") |>
@@ -299,10 +305,10 @@ sl_read_by <- function(cfg, mentor) {
     dplyr::left_join(gok_l, by = "messstellen_id")
   mentor_by <- sl_mentor(mentor, "BY") |>
     dplyr::mutate(id_alt = messstellen_id, messstellen_id = to_farm_id(messstellen_id))
-  # later MENTOR delivery (Nachlieferung): LGD number, date, level; only
-  # when MENTOR is used
+  # later MENTOR delivery (Nachlieferung): LGD number, date, level; with
+  # MENTOR or cfg$use_by_nachlieferung
   nachlieferung <- NULL
-  if (!is.null(mentor)) {
+  if (!is.null(mentor) || isTRUE(cfg$use_by_nachlieferung)) {
     nl <- tibble::as_tibble(sl_load_one(file.path(cfg$dir_gwst, "neuer_Abgleich_Mentor/nachlieferung_BY_mentor_stamm.RData")))
     nachlieferung <- tibble::tibble(
       id_alt = sl_id(nl$messstellen_id), messstellen_id = to_farm_id(sl_id(nl$messstellen_id)),
@@ -444,7 +450,7 @@ state_level_input_info <- function(cfg) {
     file.path(o, "BW/G\u00fcte-Daten_FARM_LUBW_211215.xlsx"),
     file.path(o, "BY/Gru_BGR_Prof_Broda/BIS_Daten_BGR_Prof_Broda/bde_export_bg_15062021_142744.xlsx"),
     file.path(g, "info_mentor/Stammdaten_BY.xlsx"),
-    if (mentor) file.path(g, "neuer_Abgleich_Mentor/nachlieferung_BY_mentor_stamm.RData"),
+    if (mentor || isTRUE(cfg$use_by_nachlieferung)) file.path(g, "neuer_Abgleich_Mentor/nachlieferung_BY_mentor_stamm.RData"),
     file.path(o, "HE/Berthold_W4_2021-04-16_083539/Berthold_W4/BGR_Anfrage_202103_gesamt.xlsx"),
     file.path(g, "info_mentor/Stammdaten_HE.xlsx"),
     file.path(o, "RP/RP_GW_Messst_PSM_nrM_Werte.xlsx"),
