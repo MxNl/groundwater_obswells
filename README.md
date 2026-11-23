@@ -251,7 +251,7 @@ Empty values (NA) mean no limit.
 | FARM tolerant | 1-5 m | < 10 m | 0-3 m below the water table | - | <= 4 m |
 | Very shallow | 0.5-3 m | < 5 m | 0-1 m below the water table | - | <= 2 m |
 | Screen at the water table | 1-5 m | < 10 m | above the water table | - | <= 3 m |
-| National (2020) | 1-5 m | < 10 m | 0-3 m below the water table | <= 4 m below the water table | 1-2 m |
+| National (2020) | 1-5 m | < 10 m | 0-3 m below the water table | <= 4 m below the water table | 1-4 m |
 | EU (EFSA 2023) | 1-5 m | < 10 m | - | 1-2 m below the water table | 1-2 m |
 | Even coverage | fitted | fitted | fitted | - | fitted |
 

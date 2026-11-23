@@ -1,6 +1,6 @@
 # 10. Fixed scenarios from guidelines and expert choices
 
-- Status: accepted
+- Status: accepted; National (2020) screen length amended by ADR 25
 - Date: 2026-11-04 (National and EU: 2026-11-17)
 - Code: `_targets.R` (`scenarios_fixed`)
 

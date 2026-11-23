@@ -226,8 +226,8 @@ list(
     tibble::tribble(
       ~id, ~name, ~dtw_mean_min, ~dtw_mean_max, ~dtw_max, ~screen_rule, ~top_below_max,
         ~bot_below_min, ~bot_below_max, ~screen_length_min, ~screen_length_max, ~colour, ~purpose,
-      "national_2020", "National (2020)", 1, 5, 10, "below", 3, NA, 4, 1, 2, "#B5446E",
-        "National criteria (2020): screen top 0-2 m (at most 3 m) below the water table, screen 1-2 m long, bottom at most 4 m below the water table.",
+      "national_2020", "National (2020)", 1, 5, 10, "below", 3, NA, 4, 1, 4, "#B5446E",
+        "National criteria (2020): screen top 0-2 m (at most 3 m) below the water table, screen 1-4 m long, bottom at most 4 m below the water table.",
       "farm_tolerant", "FARM tolerant", 1, 5, 10, "below", 3, NA, NA, NA, 4, "#F0A202",
         "As FARM strict, but with the screen top up to 3 m below the water table and screens up to 4 m (FARM, tolerant).",
       "eu_efsa_2023", "EU (EFSA 2023)", 1, 5, 10, "none", NA, 1, 2, 1, 2, "#3D5A80",
