@@ -28,13 +28,18 @@ dropout_step_labels <- function(spec) {
 
 # One map per step: the wells dropping out there (and the usable wells) in
 # colour, all FARM wells with coordinates in light grey behind them. Counts
-# in the panel titles include the wells without coordinates.
+# in the panel titles include the wells without coordinates. Wells with
+# coordinates outside Germany are errors in the coordinates and are dropped
+# from the map (they would stretch its extent and shrink the panels).
 plot_dropout_map <- function(wells, points, germany, spec, plot_config,
                              font = setup_plot_font(plot_config$font)) {
   setup_plot_font(plot_config$font)
   labels <- dropout_step_labels(spec)
   counts <- table(factor(dropout_step(dplyr::filter(wells, in_meta), spec), levels = labels))
   located <- table(factor(dropout_step(points, spec), levels = labels))
+  inside <- sf::st_as_sf(points, coords = c("X", "Y"), crs = sf::st_crs(germany)) |>
+    sf::st_intersects(sf::st_union(germany), sparse = FALSE)
+  points <- points[inside[, 1], ]
   title_of <- function(l) {
     n <- counts[[l]]
     missing <- n - located[[l]]

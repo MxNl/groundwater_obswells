@@ -22,6 +22,9 @@ where they are. The scenario thresholds were only readable as numbers in
   FARM wells with coordinates are drawn in light grey behind. The panel
   titles count all wells, also those without coordinates, and say how many
   of them cannot be mapped.
+- Wells with coordinates outside Germany are errors in the coordinates and
+  are dropped from the map; they would stretch the extent and shrink every
+  panel. They stay in the counts.
 - Scenario schematics: one 1-D well profile per fixed scenario (ground
   surface, casing, coloured screen, an example mean water table with the
   saturated zone) with the thresholds as arrow spans and labels. Mean water
