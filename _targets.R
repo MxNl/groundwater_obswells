@@ -307,6 +307,18 @@ list(
     plot_missing_screens(well_points, germany, plot_config, plot_font),
     format = "file"
   ),
+  # the wells at the step where they drop out, one map per step
+  tar_target(
+    dropout_map_plot,
+    plot_dropout_map(well_dtw, well_points, germany, well_spec, plot_config, plot_font),
+    format = "file"
+  ),
+  # scenarios_fixed drawn at a schematic well profile
+  tar_target(
+    scenario_schematic_plot,
+    plot_scenario_schematics(scenarios_fixed, plot_config, plot_font),
+    format = "file"
+  ),
   tar_target(
     sankey_combined_plot,
     plot_sankey_combined(well_dtw, scenarios, scenario_wells, scenario_steps, well_spec, plot_config, plot_font),

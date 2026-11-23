@@ -42,6 +42,7 @@ of the method, so their numbers are not always in order.
 - [25. National (2020): screens up to 4 m long](0025-national-2020-screens-up-to-4-m.md)
 - [11. "Even coverage": a scenario fitted to cover Germany evenly](0011-even-coverage-scenario.md)
 - [12. Each well counted once, in the most selective scenario it meets](0012-scenario-groups.md)
+- [26. Drop-out map and scenario schematics](0026-dropout-map-and-scenario-schematics.md)
 
 ## Workflow
 

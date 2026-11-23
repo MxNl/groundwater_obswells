@@ -67,6 +67,9 @@ wells), `sankey_scenarios.png` (the same for the criteria of each scenario),
 `sankey_combined.png` (preprocessing and scenarios in one diagram; each
 usable well is counted once, in the most selective scenario it meets),
 `missing_screen_depths.png` (where screen depths are missing, per state),
+`dropout_map.png` (one map per step: the wells dropping out there and the
+usable wells), `scenario_schematics.png` (the thresholds of each fixed
+scenario as arrow spans at a schematic well profile),
 `scenario_optimisation.png` (the cells covered by the "Even coverage"
 scenario and how its thresholds were fitted),
 `method_flowchart.png` (all checking and filtering steps in short words,
