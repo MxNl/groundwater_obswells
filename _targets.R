@@ -105,11 +105,34 @@ list(
         screen_top = "filter_ok_unter_gok", screen_bot = "filter_uk_unter_gok",
         x = "x", y = "y", epsg = "epsg"
       ),
-      stickup_min_pairs = 10
+      stickup_min_pairs = 10,
+      # states whose FARM records are replaced by a separate master data file
+      # (replace_farm_states()): NI has only hashed IDs and no coordinates in
+      # the FARM table. Screens: "below ground", "m NN" or "auto".
+      state_files = list(
+        NI = list(
+          file = "cache/check_farm/states_separate/NI_Stammdaten.xlsx",
+          columns = list(
+            id = "MS_NR", elev_gs = "MS_GOKNN", elev_mp = "MS_MBPNN",
+            screen_top = "MS_FOK", screen_bot = "MS_FUK",
+            x = "MS_UTMRECHTS", y = "MS_UTMHOCH", utm_zone = "MS_UTMZONE"
+          ),
+          screen_reference = "auto"
+        )
+      )
     )
   ),
   tar_target(farm_file, farm_config$file, format = "file"),
-  tar_target(farm_meta, read_farm_meta(farm_file, farm_config, id_mapping)),
+  tar_target(
+    farm_state_files,
+    vapply(farm_config$state_files, function(f) f$file, character(1)),
+    format = "file"
+  ),
+  tar_target(
+    farm_meta,
+    read_farm_meta(farm_file, farm_config, id_mapping) |>
+      replace_farm_states(farm_config$state_files, farm_state_files)
+  ),
   # one row per FARM well: the values used and where they come from
   # (*_from: FARM, gw_base, estimated from measuring point, missing)
   tar_target(
@@ -379,7 +402,10 @@ list(
   ),
   tar_target(
     method_flowchart_plot,
-    plot_method_flowchart(well_spec, coverage_settings, plot_config, level_config$neighbour_radius_m, plot_font),
+    plot_method_flowchart(
+      well_spec, coverage_settings, plot_config, level_config$neighbour_radius_m, plot_font,
+      state_files = farm_config$state_files
+    ),
     format = "file"
   ),
   tar_target(

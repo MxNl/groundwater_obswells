@@ -26,6 +26,7 @@ of the method, so their numbers are not always in order.
 - [21. The state level series are read in the pipeline](0021-state-series-read-in-the-pipeline.md)
 - [22. State series without MENTOR levels, only for FARM wells](0022-state-series-without-mentor-farm-wells-only.md)
 - [24. The BY "Nachlieferung" is read despite not using MENTOR](0024-by-nachlieferung.md)
+- [27. NI: the FARM records replaced by the NI master data](0027-ni-master-data-replace-farm-records.md)
 - [23. The level series is chosen by usability, then by priority](0023-level-series-chosen-by-usability.md)
 - [19. The state level series come from a separate script](0019-state-series-from-the-delivery-script.md) (superseded by 21)
 - [3. Checks of single levels and monthly means on SQL Server](0003-level-checks-and-monthly-means-on-the-server.md)

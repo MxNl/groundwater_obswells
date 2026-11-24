@@ -19,6 +19,9 @@ output/
 *.gpkg
 *.png
 
+# architecture decision records: kept locally, not in the repository ------------
+docs/adr/
+
 # Claude Code files --------------------------------------------------------------
 .claude/
 CLAUDE.md

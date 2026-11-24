@@ -94,6 +94,82 @@ read_farm_meta <- function(path, config, mapping) {
   out
 }
 
+# Replaces the records of single states in the FARM table by a separate
+# master data file of that state (farm_config$state_files: per state the
+# file and its columns, names as in the file). Used where the FARM table
+# lacks the IDs or coordinates, e.g. NI (hashed IDs, no coordinates). The ID
+# of the state file goes into every FARM ID column, so the mapping links it
+# like any other FARM ID. Coordinates: UTM, the zone from `utm_zone` (EPSG
+# 25832/25833), else guessed. Screens: `screen_reference` "below ground",
+# "m NN" (converted with the ground elevation) or "auto" (m NN if the screen
+# top lies mostly above the screen bottom).
+replace_farm_states <- function(farm, state_files, paths) {
+  if (length(state_files) == 0) return(farm)
+  id_fields <- grep("^id_", names(farm), value = TRUE)
+  for (st in names(state_files)) {
+    cfg <- state_files[[st]]
+    path <- paths[[match(st, names(state_files))]] # by position: file targets may lose names
+    d <- read_table_file(path)
+    cols <- unlist(cfg$columns)
+    found <- match(norm_name(cols), norm_name(names(d)))
+    if (is.na(found[names(cols) == "id"])) {
+      stop("FARM ", st, ": ID column ", cols[["id"]], " not found in ", path, ". Columns: ",
+           paste(names(d), collapse = ", "), call. = FALSE)
+    }
+    if (any(is.na(found))) {
+      warning("FARM ", st, ": columns not found in ", basename(path), ": ",
+              paste(cols[is.na(found)], collapse = ", "), call. = FALSE)
+    }
+    column <- function(field) {
+      i <- found[names(cols) == field]
+      if (length(i) == 0 || is.na(i)) return(rep(NA_character_, nrow(d)))
+      x <- trimws(as.character(d[[i]]))
+      ifelse(nzchar(x), x, NA_character_)
+    }
+    id <- column("id")
+    elev_gs <- parse_num(column("elev_gs"))
+    top <- parse_num(column("screen_top"))
+    bot <- parse_num(column("screen_bot"))
+    reference <- cfg$screen_reference %||% "auto"
+    if (reference == "auto") {
+      # depths: top < bottom; elevations: top > bottom
+      reference <- if (isTRUE(stats::median(top - bot, na.rm = TRUE) > 0)) "m NN" else "below ground"
+      message("FARM ", st, ": screen depths read as ", reference, " (from the order of top and bottom).")
+    }
+    if (reference == "m NN") {
+      top <- elev_gs - top
+      bot <- elev_gs - bot
+    }
+    zone <- suppressWarnings(as.integer(parse_num(column("utm_zone"))))
+    epsg <- ifelse(zone %in% c(32L, 33L), paste0("258", zone), NA_character_)
+    new <- tibble::tibble(
+      farm_row = max(c(0L, farm$farm_row)) + seq_len(nrow(d)),
+      farm_id = id,
+      state = st,
+      elev_gs = elev_gs,
+      elev_mp = parse_num(column("elev_mp")),
+      screen_top = top,
+      screen_bot = bot,
+      x = parse_num(column("x")),
+      y = parse_num(column("y")),
+      epsg = epsg
+    )
+    for (f in id_fields) new[[f]] <- id
+    new <- dplyr::filter(new, !is.na(farm_id))
+    dup <- unique(new$farm_id[duplicated(new$farm_id)])
+    if (length(dup) > 0) {
+      warning("FARM ", st, ": ", length(dup), " duplicate IDs in ", basename(path), ", first record used: ",
+              paste(utils::head(dup, 5), collapse = ", "), call. = FALSE)
+      new <- new[!duplicated(new$farm_id), ]
+    }
+    old <- farm$state %in% st
+    message("FARM ", st, ": ", sum(old), " records of the FARM table replaced by ", nrow(new),
+            " from ", basename(path), ".")
+    farm <- dplyr::bind_rows(farm[!old, ], new)
+  }
+  farm
+}
+
 # The key of each FARM record for `source` ("state ID" with the FARM column
 # of the mapping; NA where the mapping says "none" or the ID is empty), and
 # the mapping rows used.

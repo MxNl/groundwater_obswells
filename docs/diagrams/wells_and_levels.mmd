@@ -24,6 +24,8 @@ flowchart TB
   classDef out fill:#d1fae5,stroke:#86d9b9,stroke-width:1px,color:#064e3b
 
   farm[("D1 · FARM master data")]:::data
+  ni[("NI master data, NI_Stammdaten.xlsx")]:::data
+  rep("NI records of FARM replaced by the NI file (FARM: hashed IDs, no coordinates)"):::step
   map[("D2 · ID mapping per source and state, config/id_mapping.csv")]:::data
   gwmeta[("D3 · gw_base metadata, tbl_meta_well_import")]:::data
   gwl[("D4 · gw_base levels, tbl_gwl_raw")]:::data
@@ -32,13 +34,11 @@ flowchart TB
   st[("D5 · State level series")]:::data
   dl --> stb --> st
 
-  subgraph link ["Linking · ADR 2, 17"]
+  subgraph link ["Linking · ADR 2, 17, 27"]
     direction TB
     key("Key: state + ID without state prefix, signs and leading zeros"):::step
     cols("ID columns per source and state from the mapping (MV: messstellen_id2)"):::step
-    none{{"Not linkable: NI (hashed IDs, no coordinates)"}}:::rule
     cols --> key
-    cols --> none
   end
 
   subgraph fill ["Metadata of each FARM well · ADR 1, 20"]
@@ -61,12 +61,14 @@ flowchart TB
   srcs[("D7 · Level source of every well, level_sources")]:::data
   o1(["Where the values and the levels come from, per state"]):::out
 
-  farm --> cols
+  farm --> rep
+  ni --> rep
+  rep --> cols
   map --> cols
   gwmeta --> key
   key --> farmv
   gwmeta --> gwv
-  farm --> farmv
+  rep --> farmv
   mp --> meta
   meta --> p1
   st --> p1

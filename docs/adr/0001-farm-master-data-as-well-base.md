@@ -1,7 +1,7 @@
 # 1. FARM master data as the wells analysed, filled from gw_base
 
 - Status: accepted; the levels part superseded by ADR 18, ground elevation
-  extended by ADR 20
+  extended by ADR 20; NI records replaced by the NI master data (ADR 27)
 - Date: 2026-11-17
 - Code: `R/farm.R` (`read_farm_meta()`, `fill_farm_meta()`,
   `plot_farm_filling()`); settings `farm_config` (file

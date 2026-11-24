@@ -115,8 +115,18 @@ Which ID columns belong together is set per source and state in
 | `state` | state code, or `*` for all states without a row of their own |
 | `farm_column` | FARM column with the ID (e.g. `messstellen_id2` for MV) |
 | `other_column` | column of the other source (gw_base: `well_id` or another metadata column; state series: `messstellen_id` or `id_alt`) |
-| `link` | `id`, or `none` where the wells cannot be linked (NI: hashed FARM IDs, no coordinates) |
+| `link` | `id`, or `none` where the wells cannot be linked |
 | `note` | why |
+
+NI: the FARM table has only hashed IDs and no coordinates for NI. Its NI
+records are therefore replaced by the NI master data
+(`cache/check_farm/states_separate/NI_Stammdaten.xlsx`, setting
+`farm_config$state_files`): ID `MS_NR`, ground elevation `MS_GOKNN`,
+measuring point `MS_MBPNN`, screen `MS_FOK`/`MS_FUK`, coordinates
+`MS_UTMRECHTS`/`MS_UTMHOCH` with the zone `MS_UTMZONE`. Whether the screen
+values are depths or elevations (m NN) is detected from the order of top and
+bottom and reported. The NI wells are then linked by ID like all others.
+Further states can be replaced the same way.
 
 Where FARM has no ground elevation, screen top or bottom or coordinates, the
 value of the linked gw_base well is used. A ground elevation still missing

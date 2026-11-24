@@ -1,5 +1,5 @@
 ---
-title: "4 · Pipeline: main steps and their inputs (targets) · ADR 13, 14"
+title: "4 · Pipeline: main steps and their inputs (targets) · ADR 13, 14, 27"
 config:
   theme: base
   themeVariables:
@@ -25,13 +25,14 @@ flowchart LR
 
   db[("SQL Server via ODBC: catalogue, D3, D4")]:::data
   files[("Files: D1 FARM, D2 mapping")]:::data
+  nifile[("NI master data, NI_Stammdaten.xlsx")]:::data
   dl[("Delivery folders of the states")]:::data
   stl("State series: read when the files change"):::step
   inp{{"Size and time of the delivery files, checked every run"}}:::rule
   cfg[("Settings in _targets.R")]:::data
 
   cat("Catalogue and metadata checksum, every run"):::step
-  meta("well_meta: FARM filled from gw_base"):::step
+  meta("well_meta: FARM (NI records replaced by the NI file) filled from gw_base"):::step
   src("level_sources"):::step
   q("Server queries: monthly means, counts, seasons"):::step
   loc("State series: monthly means in R"):::step
@@ -43,6 +44,7 @@ flowchart LR
 
   db --> cat --> meta
   files --> meta
+  nifile --> meta
   meta --> src
   db --> src
   dl --> inp --> stl --> src

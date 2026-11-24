@@ -1,6 +1,6 @@
 # 17. ID columns per source and state from a mapping table
 
-- Status: accepted (extends ADR 2)
+- Status: accepted (extends ADR 2); the NI row superseded by ADR 27
 - Date: 2026-11-18
 - Code: `config/id_mapping.csv`, `R/farm.R` (`read_id_mapping()`,
   `id_mapping_for()`, `farm_link_keys()`, `fill_farm_meta()`),

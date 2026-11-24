@@ -1010,15 +1010,22 @@ plot_missing_screens <- function(points, germany, plot_config,
 # The preprocessing and filtering steps in short words, with the thresholds
 # from the settings: per step a title and the applied logic, grouped by where
 # the step works (single measurements, time series, wells, scenarios).
-method_steps <- function(spec, coverage, neighbour_radius_m = 10) {
+method_steps <- function(spec, coverage, neighbour_radius_m = 10, state_files = list()) {
   # numbers with a real minus sign
   m <- function(x) sub("^-", "\u2212", format(x, decimal.mark = ".", trim = TRUE, big.mark = ","))
-  tibble::tribble(
+  steps <- tibble::tribble(
     ~phase, ~title, ~logic,
     "Wells", "FARM master data, filled from gw_base",
       paste0("The wells of the FARM master data. Missing ground elevation, screen depths and ",
              "coordinates are taken from the same well in gw_base, linked by state and ID ",
              "(ID columns per source and state from config/id_mapping.csv)."),
+    "Wells", "Separate master data of single states",
+      if (length(state_files) == 0) NA_character_ else paste0(
+        "The FARM records of ", paste(names(state_files), collapse = ", "), " are replaced by the ",
+        "state's own master data (",
+        paste(vapply(state_files, function(f) basename(f$file), character(1)), collapse = ", "),
+        "): FARM has only hashed IDs and no coordinates there."
+      ),
     "Wells", "Ground elevation from the measuring point",
       paste0("Where the ground elevation is still missing: measuring point height minus the median ",
              "stick-up of the state's FARM wells."),
@@ -1063,12 +1070,13 @@ method_steps <- function(spec, coverage, neighbour_radius_m = 10) {
              100 * coverage$keep_share, " % of the ", coverage$cell_km,
              " km cells the loosest ones cover.")
   )
+  dplyr::filter(steps, !is.na(logic))
 }
 
 plot_method_flowchart <- function(spec, coverage, plot_config, neighbour_radius_m = 10,
-                                  font = setup_plot_font(plot_config$font)) {
+                                  font = setup_plot_font(plot_config$font), state_files = list()) {
   setup_plot_font(plot_config$font)
-  steps <- method_steps(spec, coverage, neighbour_radius_m)
+  steps <- method_steps(spec, coverage, neighbour_radius_m, state_files)
   wrap <- function(x, width) vapply(x, function(t) paste(strwrap(t, width), collapse = "\n"), character(1))
   # no line break between a number and its unit
   steps$logic <- gsub("([0-9]) (m|years|km)\\b", "\\1\u00a0\\2", steps$logic)
